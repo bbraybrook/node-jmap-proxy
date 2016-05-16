@@ -159,7 +159,7 @@ function getMailboxes(token,data,seq,res) {
     iterate_getMailboxes(response,boxes,null); // sync
 
     // select each mailbox to find the message count
-    var mailboxes = [];
+    var promises = [];
     for (var i in response.list) {
       var id = response.list[i].id;
       var name = response.list[i].name;
@@ -168,10 +168,44 @@ function getMailboxes(token,data,seq,res) {
           'name':name,
           'i':i
         } // store for getMailboxUpdates
-        mailboxes.push(id);
+        var promise = new Promise(function(resolve, reject){
+          var pi = i;
+          var pid = id;
+          imap.openBox(pid,function(err,box){
+            if (err) {
+              console.log('err='+err);
+              reject({'id':pid,'i':pi,'err':err});
+            }
+            if (box.messages) {
+              resolve({id:pid,'i':pi,'new':box.messages['new'], 'total':box.messages.total});
+            }
+          });
+        });
+        promises.push(promise);
+        promise.then(function(obj){
+          response.list[obj.i].totalMessages = obj.total;
+          response.list[obj.i].unreadMessages = obj['new'];
+        });
       }
     }
-    iterate_getMailboxSizes(token,response,mailboxes,res,seq,'getMailboxes'); // async
+    Promise.all(promises).then(function() {
+      var date = new Date;
+      response.state = date.getTime();
+      state.active[token].state = response.state; // store the state for getMailboxUpdates
+// temporary until roundcube sorts properly
+      var resort = [];
+      for (var i = 1; i < 4; i++) {
+        for (var j in response.list) {
+          if (response.list[j].sortOrder == i) {
+            resort.push(response.list[j]);
+          }
+        }
+      }
+      response.list = resort;
+// end temporary
+      res.status('200').send(JSON.stringify([['mailboxes',response,seq]]));
+    });
+    //iterate_getMailboxSizes(token,response,mailboxes,res,seq,'getMailboxes'); // async
   });
 };
 
