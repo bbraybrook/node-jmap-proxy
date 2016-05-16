@@ -4,6 +4,12 @@
 
 This is an IMAP to JMAP proxy, developed for use with roundcube-next.
 
+** Setup **
+
+npm install
+  or
+npm install --production   (to skip the testing modules)
+
 ** Running **
 
 IMAP_SERVER=mail.domain.net IMAP_PORT=143 node ./node-jmap-proxy.js
