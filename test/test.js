@@ -7,6 +7,7 @@ var user = process.env.IMAP_USER;
 var pass = process.env.IMAP_PASS;
 var hostname = 'http://localhost:3000';
 var token;
+var state;
 
 describe('NodeJS IMAP->JMAP Proxy',function() {
   describe('Authentication',function() {
@@ -192,12 +193,13 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
       before(function(done) {
         var postData = [[
           'getMailboxes',
-          {'account':user},
+          {'accountId':user},
           '#0'
-        ]]; // bogus post data else request.post won't send anything
+        ]]; 
         request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
           resdata = JSON.parse(body);
           resdata.code = res.statusCode;
+          state = resdata.state;
           done();
         });
       });
@@ -266,6 +268,43 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
       });
       it('INBOX unreadThreads == number',function() {
         expect(inbox.unreadThreads).to.be.a('number');
+      });
+    });
+    describe('GetMailboxUpdates',function() {
+      this.timeout(10000);
+      var resdata = {};
+      before(function(done) {
+        var postData = [[
+          'getMailboxUpdates',
+          {'account':user,'sinceState':state,'fetchRecords':false,'fetchRecordProperties':null},
+          '#0'
+        ]]; 
+        request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
+          resdata = JSON.parse(body);
+          resdata.code = res.statusCode;
+          done();
+        });
+      });
+      it('statusCode == 200',function() {
+        expect(resdata.code).to.equal(200);
+      });
+      it('oldState exists',function() {
+        expect("oldState" in resdata[0][1]).to.equal(true);
+      });
+      it('newState exists',function() {
+        expect("newState" in resdata[0][1]).to.equal(true);
+      });
+      it('state incremented',function() {
+        expect(resdata[0][1].oldState < resdata[0][1].newState).to.equal(true);
+      });
+      it('changed is array',function() {
+        expect(resdata[0][1].changed).to.be.a('array');
+      });
+      it('removed is array',function() {
+        expect(resdata[0][1].removed).to.be.a('array');
+      });
+      it('onlyCountsChanged is true',function() {
+        expect(resdata[0][1].onlyCountsChanged).to.equal(true);
       });
     });
   });

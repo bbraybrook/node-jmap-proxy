@@ -15,8 +15,6 @@ app.use(bodyParser.urlencoded({extended: true}));
 var state = { 'auth':{}, 'active':{} };
 module.exports = state;
 
-var date = new Date;
-
 app.options('*',function(req,res) {
   res.set({
     'Access-Control-Allow-Origin':'*',
@@ -49,7 +47,6 @@ function authenticate(req,res) {
     console.log(req.body.username+'/'+token+': in pre-auth');
     state.auth[token] = {'username':req.body.username};
     var response = {'continuationToken':token,'methods':['password'],'prompt':'Password:'};
-    //res.send('<form method="post" action="/authenticate"><input type="hidden" name="token" value="'+token+'">password:<input type="text" name="password" value="b"><br/><input type="submit" name="submit"></form><br/><br/><code>'+JSON.stringify(response)+'</code>');
     res.status('200').send(JSON.stringify(response));
   } else if (req.body.token) {
     if (!state.auth[req.body.token]) {
@@ -116,8 +113,10 @@ app.post('/jmap',function (req,res) {
         break;
       case 'getMailboxUpdates':
         getMailboxUpdates(token,data,seq,res);
+        break;
       case 'getMessageList':
         getMessageList(token,data,seq,res);
+        break;
     }
   }
 });
@@ -179,23 +178,24 @@ function getMailboxes(token,data,seq,res) {
 // getMailboxUpdates
 // select each mailbox, compare the message counts and uidnext to what is stored in state
 // report on any changes
-app.post('/jmap/getMailboxUpdates',function (req,res) {
-  var token = req.body.token;
-  var imap = state.active[req.body.token].imap;
+function getMailboxUpdates(token,data,seq,res) {
+  var account = data.accountId;
+  var imap = state.active[token].imap;
   var response = {
-    'accountId':'primary',
-    'oldstate':state.active[req.body.token].state,
-    'changed':[],
-    'removed':[], // TBD
+    'accountId': account,
+    'oldState': state.active[token].state,
+    'newState': state.active[token].state,
+    'changed': [],
+    'removed': [], // TBD
     'onlyCountsChanged': true
   };
   // select each mailbox to find the message count
   var mailboxes = [];
-  for (var id in state.active[req.body.token].mailboxes) {
+  for (var id in state.active[token].mailboxes) {
     mailboxes.push(id);
   }
-  iterate_getMailboxSizes(response,mailboxes,res,req,'getMailboxUpdates'); // async
-});
+  iterate_getMailboxSizes(token,response,mailboxes,res,seq,'getMailboxUpdates'); // async
+};
 
 iterate_getMailboxes = function(response,boxes,parentmb) {
   for (var mailbox in boxes) {
@@ -287,29 +287,27 @@ iterate_getMailboxSizes = function(token,response,mailboxes,res,seq,mode) {
       iterate_getMailboxSizes(token,response,mailboxes,res,seq,mode);
     });
   } else {
-    response.state = date.getTime();
-    state.active[token].state = response.state; // store the state for getMailboxUpdates
     if (mode == 'getMailboxes') {
+      var date = new Date;
+      response.state = date.getTime();
+      state.active[token].state = response.state; // store the state for getMailboxUpdates
 // temporary until roundcube sorts properly
-    var resort = [];
-    for (var i = 1; i < 4; i++) {
-      for (var j in response.list) {
-        if (response.list[j].sortOrder == i) {
-          resort.push(response.list[j]);
+      var resort = [];
+      for (var i = 1; i < 4; i++) {
+        for (var j in response.list) {
+          if (response.list[j].sortOrder == i) {
+            resort.push(response.list[j]);
+          }
         }
       }
-    }
-    response.list = resort;
-//    response.list = response.list.sort(function(a,b) {
-//      console.log('a='+a.sortOrder+'/'+a.id+' b='+b.sortOrder+'/'+b.id+' sort='+(a.sortOrder < b.sortOrder));
-//      return (a.sortOrder < b.sortOrder);
-//    });
+      response.list = resort;
 // end temporary
       res.status('200').send(JSON.stringify([['mailboxes',response,seq]]));
-      //res.send('<form method="post" action="/jmap/getMailboxUpdates"><input type="hidden" name="token" value="'+req.body.token+'"><input type="submit" name="submit"></form><br/><br/><code>'+JSON.stringify(response)+'</code>');
     } else if (mode == 'getMailboxUpdates') {
-      res.status('200').send(JSON.stringify(response));
-      //res.send('<form method="post" action="/jmap/getMailboxUpdates"><input type="hidden" name="token" value="'+req.body.token+'"><input type="submit" name="submit"></form><br/><br/><code>'+JSON.stringify(response)+'</code>');
+      var date = new Date;
+      response.newState = date.getTime();
+      state.active[token].state = response.newState;
+      res.status('200').send(JSON.stringify([['mailboxes',response,seq]]));
     }
   }
 };
