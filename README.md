@@ -10,9 +10,12 @@ npm install
   or
 npm install --production   (to skip the testing modules)
 
+cp config/production.json.dist config/production.json
+edit config/production.json
+
 ** Running **
 
-IMAP_SERVER=mail.domain.net IMAP_PORT=143 node ./node-jmap-proxy.js
+NODE_ENV=production node ./node-jmap-proxy.js
 
 ** Test Suite **
 

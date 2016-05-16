@@ -3,5 +3,8 @@
     "host": "mail.domain.net",
     "port": 143,
     "ssl": false
+  },
+  "Server" {
+    "port": 3000
   }
 }

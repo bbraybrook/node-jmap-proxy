@@ -2,11 +2,11 @@ var express = require('express');
 var util = require('util');
 var bodyParser = require('body-parser');
 var Imap = require('imap');
-var imapHandler = require('imap-handler');
 var randomToken = require('random-token').create('abcdefghijklmnopqrstuvwxzyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
 var Base64 = require('js-base64').Base64;
 var striptags = require('striptags');
 var quotedPrintable = require('quoted-printable');
+var config = require('config');
 var app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended: true})); 
@@ -59,9 +59,9 @@ function authenticate(req,res) {
     var imap = new Imap({
       user: username,
       password: req.body.password,
-      host: process.env.IMAP_SERVER,
-      port: process.env.IMAP_PORT,
-      tls: (process.env.SSL) ? true : false
+      host: imaphost,
+      port: imapport,
+      tls: (imapssl) ? true : false
     });
     imap.once('ready', function() {
       var token = randomToken(32);
@@ -565,7 +565,6 @@ getMessageBody = function(token,response,thismsg,uid,res,seq,bodyIsMessage,hasTe
         } else if (hasText) {
           // TBD: detect html here
           if (hasText.encoding == 'quoted-printable') {
-console.log('this was quoted-printable!');
             thismsg.textBody = quotedPrintable.decode(buffer);
           } else {
             thismsg.textBody = buffer;
@@ -581,31 +580,31 @@ console.log('this was quoted-printable!');
 
 preview_from_body = function(str) {
   str = str.substr(0,16000);
-
   // striptags can't deal with multiline <style> sections
   var a = str.indexOf('<style');
   var b = str.indexOf('</style>');
-  console.log('a='+a+' b='+b);
   if (b) {
     preview = str.slice(0,a) + '<style>' + str.slice(b);
   }
-
   preview = striptags(preview).trim().replace(/&nbsp;/g,' ').substr(0,256);
-
   return preview;
 };
 
-app.listen(3000, function () {
-  if (process.env.IMAP_SERVER && process.env.IMAP_PORT) {
-    if (process.env.IMAP_SSL) {
-      console.log('proxying IMAP requests to '+process.env.IMAP_SERVER+':'+process.env.IMAP_PORT+' using SSL');
-    } else {
-      console.log('proxying IMAP requests to '+process.env.IMAP_SERVER+':'+process.env.IMAP_PORT);
-    }
+var imaphost = config.get('IMAP.host');
+var imapport = config.get('IMAP.port');
+var imapssl  = config.get('IMAP.ssl');
+var serverport = config.get('Server.port') || 3000;
+
+if (!imaphost || !imapport) {
+  console.log('must provide IMAP.host and IMAP.port in config/production.conf');
+  throw new Error();
+}
+
+app.listen(serverport, function () {
+  console.log('JMAP proxy listening on port '+serverport);
+  if (imapssl) {
+    console.log('proxying IMAP requests to '+imaphost+':'+imapport+' using SSL');
   } else {
-    console.log('must provide IMAP_SERVER and IMAP_PORT environment variables');
-    console.log('ie: IMAP_SERVER=mail.domain.net IMAP_PORT=143 node ./node-jmap-proxy.js');
-    throw new Error();
+    console.log('proxying IMAP requests to '+imaphost+':'+imapport);
   }
-  console.log('JMAP proxy listening on port 3000!');
 });

@@ -1,7 +1,0 @@
-{
-  "IMAP": {
-    "host": "mail.domain.net",
-    "port": 143,
-    "ssl": false
-  }
-}
