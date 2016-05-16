@@ -6,5 +6,15 @@
   },
   "Server" {
     "port": 3000
+  },
+  "Options": {
+    "prefer_RFC6154": true,
+    "special_folders": {
+      "Trash":"trash",
+      "Sent Items":"sent",
+      "Drafts":"drafts",
+      "Spam":"spam",
+      "Templates":"templates"
+    }
   }
 }

@@ -213,7 +213,7 @@ iterate_getMailboxes = function(response,boxes,parentmb) {
       entry.role = 'inbox';
       entry.mayRename = false;
       entry.mayDelete = false;
-    } else if (boxes[mailbox].special_use_attrib) {
+    } else if (boxes[mailbox].special_use_attrib && config.Server.prefer_RFC6154) {
       entry.sortOrder = 2;
       if (boxes[mailbox].special_use_attrib.indexOf('\\Trash') > -1) {
         entry.role = 'trash';
@@ -224,6 +224,11 @@ iterate_getMailboxes = function(response,boxes,parentmb) {
       } else if (boxes[mailbox].special_use_attrib.indexOf('\\Junk') > -1) {
         entry.role = 'spam';
       }
+      entry.mayRename = false;
+      entry.mayDelete = false;
+    } else if (config.Options.special_folders[entry.id]) {
+      entry.sortOrder = 2;
+      entry.role = config.Options.special_folders[mailbox];
       entry.mayRename = false;
       entry.mayDelete = false;
     } else {
