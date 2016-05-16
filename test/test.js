@@ -101,7 +101,7 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
     });
   });
   describe('Accounts',function() {
-    describe('GetAccounts',function() {
+    describe('getAccounts',function() {
       var resdata = {};
       before(function(done) {
         var postData = [[
@@ -187,7 +187,7 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
     });
   });
   describe('Mailboxes',function() {
-    describe('GetMailboxes',function() {
+    describe('getMailboxes',function() {
       this.timeout(10000);
       var resdata = {};
       before(function(done) {
@@ -270,7 +270,7 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
         expect(inbox.unreadThreads).to.be.a('number');
       });
     });
-    describe('GetMailboxUpdates',function() {
+    describe('getMailboxUpdates',function() {
       this.timeout(10000);
       var resdata = {};
       before(function(done) {
@@ -305,6 +305,79 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
       });
       it('onlyCountsChanged is true',function() {
         expect(resdata[0][1].onlyCountsChanged).to.equal(true);
+      });
+    });
+  });
+  describe('MessageLists',function() {
+    describe('getMessageList - position=0 limit=10 sort=arrival [INBOX]',function() {
+      this.timeout(10000);
+      var resdata = {};
+      before(function(done) {
+        var postData = [[
+          'getMessageList',
+          {
+            'accountId':user,
+            'filter': {
+              'inMailboxes':['INBOX']
+            },
+            'sort': 'arrival desc',
+            'collapseThreads': null,
+            'position': 0,
+            'anchor': null,
+            'anchorOffset': null,
+            'limit': 10,
+            'fetchThreads':false,
+            'fetchMessages':false,
+            'fetchMessageProperties':null,
+            'fetchSearchSnippets':null,
+          },
+          '#0'
+        ]]; 
+        request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
+          resdata = JSON.parse(body);
+          resdata.code = res.statusCode;
+          state = resdata.state;
+          done();
+        });
+      });
+      it('statusCode == 200',function() {
+        expect(resdata.code).to.equal(200);
+      });
+      it('accountId == '+user,function() {
+        expect(resdata[0][1].accountId).to.equal(user);
+      });
+      it('filter exists',function() {
+        expect("filter" in resdata[0][1]).to.equal(true);
+      });
+      it('sort exists',function() {
+        expect("sort" in resdata[0][1]).to.equal(true);
+      });
+      it('state exists',function() {
+        expect("state" in resdata[0][1]).to.equal(true);
+      });
+      it('canCalculateUpdates == false',function() {
+        expect(resdata[0][1].canCalculateUpdates).to.equal(false);
+      });
+      it('collapseThreads == true',function() {
+        expect(resdata[0][1].collapseThreads).to.equal(true);
+      });
+      it('position == 0',function() {
+        expect(resdata[0][1].position).to.equal(0);
+      });
+      it('total == 10',function() {
+        expect(resdata[0][1].total).to.equal(10);
+      });
+      it('threadIds == array',function() {
+        expect(resdata[0][1].threadIds).to.be.a('array');
+      });
+      it('messageIds == array',function() {
+        expect(resdata[0][1].messageIds).to.be.a('array');
+      });
+      it('messageIds.length == 10',function() {
+        expect(resdata[0][1].messageIds.length).to.equal(10);
+      });
+      it('whatevs',function() {
+        console.log('resdata='+util.inspect(resdata,{'depth':4}));
       });
     });
   });
