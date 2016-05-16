@@ -11,6 +11,7 @@ npm install
 npm install --production   (to skip the testing modules)
 
 cp config/production.json.dist config/production.json
+
 edit config/production.json
 
 ** Running **
