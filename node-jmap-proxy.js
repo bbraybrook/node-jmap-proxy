@@ -177,7 +177,7 @@ function getMailboxes(token,data,seq,res) {
               reject({'id':pid,'i':pi,'err':err});
             }
             if (box.messages) {
-              resolve({id:pid,'i':pi,'new':box.messages['new'], 'total':box.messages.total});
+              resolve({id:pid,'i':pi,'new':box.messages['new'], 'total':box.messages.total,'uidnext':box.uidnext});
             }
           });
         });
@@ -185,6 +185,9 @@ function getMailboxes(token,data,seq,res) {
         promise.then(function(obj){
           response.list[obj.i].totalMessages = obj.total;
           response.list[obj.i].unreadMessages = obj['new'];
+          state.active[token].mailboxes[obj.id].uidnext = obj.uidnext;
+          state.active[token].mailboxes[obj.id].total = obj.total;
+          state.active[token].mailboxes[obj.id]['new'] = obj['new'];
         });
       }
     }
@@ -205,7 +208,6 @@ function getMailboxes(token,data,seq,res) {
 // end temporary
       res.status('200').send(JSON.stringify([['mailboxes',response,seq]]));
     });
-    //iterate_getMailboxSizes(token,response,mailboxes,res,seq,'getMailboxes'); // async
   });
 };
 
@@ -224,11 +226,40 @@ function getMailboxUpdates(token,data,seq,res) {
     'onlyCountsChanged': true
   };
   // select each mailbox to find the message count
-  var mailboxes = [];
+  var promises = [];
   for (var id in state.active[token].mailboxes) {
-    mailboxes.push(id);
+    var promise = new Promise(function(resolve, reject){
+      var pid = id;
+      imap.openBox(pid,function(err,box){
+        if (err) {
+          reject({'id':pid,'i':pi,'err':err});
+        }
+        if (box.messages) {
+          resolve({id:pid,'new':box.messages['new'], 'total':box.messages.total,'uidnext':box.uidnext});
+        }
+      });
+    });
+    promises.push(promise);
+    promise.then(function(obj){
+      if (obj.uidnext !== state.active[token].mailboxes[obj.id].uidnext) {
+        response.onlyCountsChanged = false;
+      }
+      if (obj.total !== state.active[token].mailboxes[obj.id].total) {
+        response.changed.push(obj.id);
+      } else if (obj['new'] !== state.active[token].mailboxes[obj.id]['new']) {
+        response.changed.push(obj.id);
+      }
+      state.active[token].mailboxes[obj.id].uidnext = obj.uidnext;
+      state.active[token].mailboxes[obj.id].total = obj.total;
+      state.active[token].mailboxes[obj.id]['new'] = obj['new'];
+    });
   }
-  iterate_getMailboxSizes(token,response,mailboxes,res,seq,'getMailboxUpdates'); // async
+  Promise.all(promises).then(function() {
+    var date = new Date;
+    response.newState = date.getTime();
+    state.active[token].state = response.newState;
+    res.status('200').send(JSON.stringify([['mailboxes',response,seq]]));
+  });
 };
 
 iterate_getMailboxes = function(response,boxes,parentmb) {
@@ -288,60 +319,6 @@ iterate_getMailboxes = function(response,boxes,parentmb) {
     response.list.push(entry);
     if (obj.children) {
       iterate_getMailboxes(response,obj.children,entry.id)
-    }
-  }
-};
-
-iterate_getMailboxSizes = function(token,response,mailboxes,res,seq,mode) {
-  if (mailboxes.length > 0) {
-    var id = mailboxes.pop();
-    var i = state.active[token].mailboxes[id].i;
-    var imap = state.active[token].imap;
-    console.log(state.active[token].username+'/'+token+': reading mailbox '+id+' for counts');
-    imap.openBox(id,function(err,box){
-      if (mode == 'getMailboxes') {
-        response.list[i].totalMessages = box.messages.total;
-        response.list[i].unreadMessages = box.messages['new'];
-      } else if (mode == 'getMailboxUpdates') {
-        if (box.uidnext !== state.active[token].mailboxes[id].uidnext) {
-          // new messages have arrived
-          response.onlyCountsChanged = false;
-        }
-        if (box.messages.total !== state.active[token].mailboxes[id].total
-          || box.messages['new'] !== state.active[token].mailboxes[id]['new']) {
-            // counts have changed
-            response.changed.push(id);
-        }
-      }
-      // store for getMailboxUpdates
-      state.active[token].mailboxes[id].uidnext = box.uidnext;
-      state.active[token].mailboxes[id].total = box.messages.total;
-      state.active[token].mailboxes[id]['new'] = box.messages['new'];
-
-      iterate_getMailboxSizes(token,response,mailboxes,res,seq,mode);
-    });
-  } else {
-    if (mode == 'getMailboxes') {
-      var date = new Date;
-      response.state = date.getTime();
-      state.active[token].state = response.state; // store the state for getMailboxUpdates
-// temporary until roundcube sorts properly
-      var resort = [];
-      for (var i = 1; i < 4; i++) {
-        for (var j in response.list) {
-          if (response.list[j].sortOrder == i) {
-            resort.push(response.list[j]);
-          }
-        }
-      }
-      response.list = resort;
-// end temporary
-      res.status('200').send(JSON.stringify([['mailboxes',response,seq]]));
-    } else if (mode == 'getMailboxUpdates') {
-      var date = new Date;
-      response.newState = date.getTime();
-      state.active[token].state = response.newState;
-      res.status('200').send(JSON.stringify([['mailboxes',response,seq]]));
     }
   }
 };
