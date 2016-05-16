@@ -13,6 +13,15 @@
     "express": "^4.13.4",
     "imap": "^0.8.17",
     "md5": "^2.1.0",
-    "random-token": "^0.0.8"
+    "random-token": "^0.0.8",
+    "config":"^1.2.1",
+    "js-base64":"^2.1.9",
+    "md5":"^2.1.0",
+    "striptags":"^2.1.1"
+  },
+  "devDependencies": {
+    "chai":"^3.5.0",
+    "mocha":"^2.4.5",
+    "request":"^2.72.0"
   }
 }
