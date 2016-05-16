@@ -6,6 +6,7 @@ var randomToken = require('random-token').create('abcdefghijklmnopqrstuvwxzyABCD
 var Base64 = require('js-base64').Base64;
 var striptags = require('striptags');
 var quotedPrintable = require('quoted-printable');
+var isHtml = require('is-html');
 var config = require('config');
 var app = express();
 app.use(bodyParser.json());
@@ -556,21 +557,24 @@ getMessageBody = function(token,response,thismsg,uid,res,seq,bodyIsMessage,hasTe
         buffer += chunk;
       });
       stream.on('end',function(){
-        if (bodyIsMessage) {
+        if (hasHtml) {
           thismsg.htmlBody = buffer;
-          thismsg.preview = preview_from_body(thismsg.htmlBody);
-        } else if (hasHtml) {
-          thismsg.htmlBody = buffer;
-          thismsg.preview = preview_from_body(thismsg.htmlBody);
-        } else if (hasText) {
-          // TBD: detect html here
-          if (hasText.encoding == 'quoted-printable') {
-            thismsg.textBody = quotedPrintable.decode(buffer);
+        } else {
+          var body = '';
+          if (thismsg.headers['content-transfer-encoding'] && thismsg.headers['content-transfer-encoding'] == 'base64') {
+            body = Base64.decode(buffer);
+          } else if (hasText && hasText.encoding == 'quoted-printable') {
+            body = quotedPrintable.decode(buffer);
           } else {
-            thismsg.textBody = buffer;
+            body = buffer;
           }
-          thismsg.preview = preview_from_body(thismsg.textBody);
+          if (isHtml(body)) {
+            thismsg.htmlBody = body;
+          } else {
+            thismsg.textBody = body;
+          }
         }
+        thismsg.preview = preview_from_body(thismsg.textBody || thismsg.htmlBody);
         response[index].list.push(thismsg);
         iterate_getMessages(token,response,msglist,res,seq,mode);
       });

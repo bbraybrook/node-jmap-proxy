@@ -18,7 +18,8 @@
     "js-base64":"^2.1.9",
     "md5":"^2.1.0",
     "striptags":"^2.1.1",
-    "quoted-printable","^1.0.0"
+    "quoted-printable":"^1.0.0",
+    "is-html":"^1.0.0"
   },
   "devDependencies": {
     "chai":"^3.5.0",
