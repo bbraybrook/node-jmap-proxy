@@ -173,7 +173,6 @@ function getMailboxes(token,data,seq,res) {
           var pid = id;
           imap.openBox(pid,function(err,box){
             if (err) {
-              console.log('err='+err);
               reject({'id':pid,'i':pi,'err':err});
             }
             if (box.messages) {
@@ -354,73 +353,75 @@ function getMessageList(token,data,seq,res) {
   };
   var imap = state.active[token].imap;
 
-  if (sort == 'arrival' || sort == 'date') {
-    // we can calculate these using the default MID orders to save processing
-    imap.openBox(folder,false,function(err,box){
-      if (err) { return; }
+  // must call imap FILTER/SORT to deal with the request
+  imap.openBox(folder,false,function(err,box){
+    if (err) { return; }
+    if (box.messages.total < 1) {
+      // no messages
+    } else {
       var mids = [];
-      var enduid = box.messages.total;
-      var r1, r2;
-      if (enduid < 1) {
-        // no messages
-      } else {
-        if (direction == 'ascending') {
-          r1 = position;
-          r2 = r1 + limit;
-        } else {
-          if (position) {
-            r1 = position;
-            r2 = r1 + limit;
+      imap.seq.sort([sort.toUpperCase()],['1:*'],function(err,result){
+        for (var i in result) {
+          if (i == limit) {
+            break;
           } else {
-            r2 = enduid;
-            r1 = r2 - limit;
+            mids.push(result[i].toString());
           }
         }
-        if (r2 > enduid) {
-          r2 = enduid;
-        }
-        for (var i = r1; i < r2; ++i) {
-          mids.push(i+1);
-          //var id = Base64.encode(folder + "\t" + i);
-          //response[0].messageIds.push(id);
-        }
-      }
-      // now fetch UIDs
-      range = mids[0] + ':' + mids[mids.length - 1];
-      var promise = new Promise(function(fulfill, reject) {
-        var ids = [];
-        fetch = imap.seq.fetch(range,{'struct':false,'size':false});
-        fetch.on('message',function(msgevent,mid){
-          var thismsg = {mailboxIds:[folder],'preview':'','textBody':'','htmlBody':'','attachments':[],'attachedMessages':[]};
-          msgevent.on('attributes',function(attrs){
-            var uid = attrs.uid;
-            thismsg.id = Base64.encode(folder + "\t" + mid + "\t" + uid);
-            thismsg.blobId = thismsg.id;
-            thismsg.threadId = thismsg.id;
-            ids.push(Base64.encode(folder+"\t"+mid+"\t"+uid));
+        // now fetch UIDs
+        var uids = {};
+        var promise = new Promise(function(fulfill, reject) {
+          var ids = [];
+          fetch = imap.seq.fetch(mids,{'struct':false,'size':false});
+          fetch.on('message',function(msgevent,mid){
+            msgevent.on('attributes',function(attrs){
+              var uid = attrs.uid;
+              ids.push(Base64.encode(folder+"\t"+mid+"\t"+uid));
+              uids[uid] = {'mid':mid};
+            });
+          });
+          fetch.on('end',function(){
+            fulfill(ids);
           });
         });
-        fetch.on('end',function(){
-          fulfill(ids);
+
+        promise.then(function(ids){
+          response[0].messageIds = ids;
+          response[0].total = response[0].messageIds.length;
+
+          // need to request ALL messages in order to find threading
+          imap.thread('REFERENCES',[['UID','1:*']],function(err,result){
+            for (var i in result) {
+              var arr = result[i];
+              for (var j in arr) {
+                // force to be string, unclear if elements will be numeric or string
+                arr[j] = arr[j].toString();
+              }
+              for (var uid in uids) {
+                var pos = arr.indexOf(uid.toString());
+                if (pos == 0) {
+                  uids[uid].threadUid = uid;
+                } else if (pos > 0) {
+                  uids[uid].threadUid = arr[0];
+                }
+              }
+            }
+            for (var uid in uids) {
+              var threadUid = uids[uid].threadUid;
+              response[0].threadIds.push(Base64.encode(folder+"\t0\t"+threadUid));
+            }
+            if (!fetchmessages) {
+              res.status('200').send(JSON.stringify([['messageList',response[0],seq]]));
+            } else {
+              var msglist = response[0].messageIds.slice();
+              response[1] = {};
+              iterate_getMessages(token,response,msglist,res,seq,'getMessageList');
+            }
+          });
         });
       });
-
-      promise.then(function(uids){
-        response[0].messageIds = uids;
-        response[0].total = response[0].messageIds.length;
-
-        if (fetchmessages) {
-          var msglist = response[0].messageIds.slice();
-          response[1] = {};
-          iterate_getMessages(token,response,msglist,res,seq,'getMessageList');
-        } else {
-          res.status('200').send(JSON.stringify([['messageList',response[0],seq]]));
-        }
-      });
-    })
-  } else {
-    // must call imap FILTER/SORT to deal with the request
-  }
+    }
+  });
 }
 
 iterate_getMessages = function(token,response,msglist,res,seq,mode) {
@@ -441,23 +442,22 @@ iterate_getMessages = function(token,response,msglist,res,seq,mode) {
     var uid;
     var a = Base64.decode(id).split("\t");
     var folder = a[0];
-    var msgtype = a[1];
-    var msgid = a[2];
+    var mid = a[1];
+    var uid = a[2];
     if (folder !== curbox) {
       msglist.unshift(id);
       imap.openBox(folder,function(err,box){
-        console.log(state.active[token].username+'/'+token+': switching to folder '+folder+' for msgid '+msgid);
+        console.log(state.active[token].username+'/'+token+': switching to folder '+folder+' for mid '+mid);
         iterate_getMessages(token,response,msglist,res,seq,mode);
       });
     } else {
-      var retrmode = (msgtype == 'M') ? 'mid' : 'uid';
       var fetch;
-      if (retrmode == 'mid') {
-        console.log(state.active[token].username+'/'+token+': fetching struct,size,headers from folder '+folder+' for msgid '+msgid);
-        fetch = imap.seq.fetch(msgid,{'struct':true,'size':true,'bodies':['HEADER']});
+      if (uid) {
+        console.log(state.active[token].username+'/'+token+': fetching struct,size,headers from folder '+folder+' for uid '+uid);
+        fetch = imap.fetch(uid,{'struct':true,'size':true,'bodies':['HEADER']});
       } else {
-        console.log(state.active[token].username+'/'+token+': fetching struct,size,headers from folder '+folder+' for uid '+msgid);
-        fetch = imap.fetch(msgid,{'struct':true,'size':true,'bodies':['HEADER']});
+        console.log(state.active[token].username+'/'+token+': fetching struct,size,headers from folder '+folder+' for mid '+mid);
+        fetch = imap.seq.fetch(mid,{'struct':true,'size':true,'bodies':['HEADER']});
       }
 
       // use these to determine when we can retrieve the body
