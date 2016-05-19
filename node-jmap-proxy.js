@@ -1,5 +1,5 @@
-var express = require('express');
 var util = require('util');
+var express = require('express');
 var bodyParser = require('body-parser');
 var Imap = require('imap');
 var randomToken = require('random-token').create('abcdefghijklmnopqrstuvwxzyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
@@ -11,6 +11,7 @@ var config = require('config');
 var app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended: true})); 
+var textmode = (config.Server['utf-8'] == true) ? 'UTF-8' : 'US-ASCII';
 
 var state = { 'auth':{}, 'active':{} };
 module.exports = state;
@@ -353,63 +354,93 @@ function getMessageList(token,data,seq,res) {
   };
   var imap = state.active[token].imap;
 
-  // must call imap FILTER/SORT to deal with the request
+  // must call imap SORT/SEACH to deal with the request
   imap.openBox(folder,false,function(err,box){
     if (err) { return; }
     if (box.messages.total < 1) {
       // no messages
     } else {
-      var mids = [];
-      imap.seq.sort([sort.toUpperCase()],['1:*'],function(err,result){
-        for (var i in result) {
-          if (i == limit) {
-            break;
-          } else {
-            mids.push(result[i].toString());
+      var uids = [];
+      var uidlist;
+      var searchPromise = new Promise(function(yay, nay) {
+        var cmd = 'UID SEARCH ';
+        if (Object.keys(data.filter).length > 1) {
+          if ('after' in data.filter) cmd += 'SINCE "' + data.filter.after + '"';
+          if ('minsize' in data.filter) cmd += 'LARGER "' + data.filter.minsize + '"';
+          if ('maxsize' in data.filter) cmd += 'SMALLER "' + data.filter.maxsize + '"';
+          // threadIsFlagged - PITA to support
+          // threadIsUnread - PITA to support
+          if ('isFlagged' in data.filter) cmd += 'FLAGGED';
+          if ('isUnread' in data.filter) cmd += 'NEW';
+          if ('isAnswered' in data.filter) cmd += 'ANSWERED';
+          if ('isDraft' in data.filter) cmd += 'DRAFT';
+          // hasAttachment - PITA to support
+          var textconds = ['FROM','TO','CC','BCC','SUBJECT'];
+          if ('text' in data.filter) { // no body searches, doesn't align with IMAP text search either
+            cmd += 'OR';
+            for (var i in textconds) {
+              var cond = textconds[i];
+              cmd += ' ' + cond + ' "'+ data.filter.text + '"';
+            }
           }
+          // body - no body searches
+          var simpleconds = ['before','from','to','cc','bcc','subject'];
+          for (var i in simpleconds) {
+            var cond = simpleconds[i];
+            if (cond in data.filter) cmd += cond.toUpperCase() + ' "' + data.filter[cond] + '"';
+          }
+          console.log(state.active[token].username+'/'+token+': '+cmd);
+          imap._enqueue(cmd,function(err,result){
+            yay(result);
+          });
+        } else {
+          yay('1:*') ; // no search, let sort see all messages
         }
-        // now fetch UIDs
-        var uids = {};
-        var promise = new Promise(function(fulfill, reject) {
-          var ids = [];
-          fetch = imap.seq.fetch(mids,{'struct':false,'size':false});
-          fetch.on('message',function(msgevent,mid){
-            msgevent.on('attributes',function(attrs){
-              var uid = attrs.uid;
-              ids.push(Base64.encode(folder+"\t"+mid+"\t"+uid));
-              uids[uid] = {'mid':mid};
+      });
+      searchPromise.then(function(result) {
+        var uidlist = result;
+        var sortPromise = new Promise(function(yay, nay) {
+          if (uidlist.length > 1) {
+            var cmd = 'UID SORT (' + sort.toUpperCase() + ') UTF-8 '+result.join(',');
+            console.log(state.active[token].username+'/'+token+': '+cmd);
+            imap._enqueue(cmd,function(err,result){
+              yay(result);
             });
-          });
-          fetch.on('end',function(){
-            fulfill(ids);
-          });
+          } else {
+            yay(result); // no need to sort
+          }
         });
 
-        promise.then(function(ids){
-          response[0].messageIds = ids;
-          response[0].total = response[0].messageIds.length;
+        sortPromise.then(function(result) {
+          var uids = result;
+          for (var i in uids) {
+            response[0].messageIds.push(Base64.encode(folder+"\t"+uids[i]));
+          }
 
-          // need to request ALL messages in order to find threading
-          imap.thread('REFERENCES',[['UID','1:*']],function(err,result){
-            for (var i in result) {
-              var arr = result[i];
-              for (var j in arr) {
-                // force to be string, unclear if elements will be numeric or string
-                arr[j] = arr[j].toString();
-              }
-              for (var uid in uids) {
-                var pos = arr.indexOf(uid.toString());
-                if (pos == 0) {
-                  uids[uid].threadUid = uid;
-                } else if (pos > 0) {
-                  uids[uid].threadUid = arr[0];
+          var threadPromise = new Promise(function(yay, nay) {
+            var threads = [];
+            var cmd = 'UID THREAD ' + config.Server['threads'] + ' ' + textmode +' 1:*'; // must call for all messages to find all threads
+            console.log(state.active[token].username+'/'+token+': '+cmd);
+            imap._enqueue(cmd,function(err,result){
+              // the UID values may or may not be strings, always force to string
+              for (var i in result) {
+                for (var j in result[i]) {
+                  result[i][j] = result[i][j].toString();
+                }
+                for (var k in uids) {
+                  var pos = result[i].indexOf(uids[k].toString());
+                  if (pos == 0) { // message is the start of a thread
+                    threads.push(Base64.encode(folder+"\t"+uids[k]));
+                  } else if (pos > 0) { // message is not the start of a thread
+                    threads.push(Base64.encode(folder+"\t"+arr[0]));
+                  }
                 }
               }
-            }
-            for (var uid in uids) {
-              var threadUid = uids[uid].threadUid;
-              response[0].threadIds.push(Base64.encode(folder+"\t0\t"+threadUid));
-            }
+              yay(threads);
+            });
+          });
+          threadPromise.then(function(result){
+            response[0].threadIds = result;
             if (!fetchmessages) {
               res.status('200').send(JSON.stringify([['messageList',response[0],seq]]));
             } else {
@@ -548,6 +579,9 @@ iterate_getMessages = function(token,response,msglist,res,seq,mode) {
             }
           });
         });
+        msgevent.on('end',function(){
+console.log('end of msgevent');
+        });
       });
     }
   } else {
@@ -639,11 +673,6 @@ var imaphost = config.get('IMAP.host');
 var imapport = config.get('IMAP.port');
 var imapssl  = config.get('IMAP.ssl');
 var serverport = config.get('Server.port') || 3000;
-
-if (!imaphost || !imapport) {
-  console.log('must provide IMAP.host and IMAP.port in config/production.conf');
-  throw new Error();
-}
 
 app.listen(serverport, function () {
   console.log('JMAP proxy listening on port '+serverport);
