@@ -195,6 +195,7 @@ function getMailboxes(token,data,seq,res) {
           state.active[token].mailboxes[obj.id].total = obj.total;
           state.active[token].mailboxes[obj.id]['new'] = obj['new'];
         });
+        promise.catch(function(err){ log(err); });
       }
     }
     Promise.all(promises).then(function() {
@@ -259,6 +260,7 @@ function getMailboxUpdates(token,data,seq,res) {
       state.active[token].mailboxes[obj.id].total = obj.total;
       state.active[token].mailboxes[obj.id]['new'] = obj['new'];
     });
+    promise.catch(function(err){ log(err); });
   }
   Promise.all(promises).then(function() {
     var date = new Date;
@@ -330,7 +332,6 @@ iterate_getMailboxes = function(response,boxes,parentmb) {
 };
 
 function getMessageList(token,data,seq,res) {
-console.log('in getMessageList');
   var response = [];
   var sort = data.sort;
   var direction = 'decending'; // default sort order
@@ -347,7 +348,6 @@ console.log('in getMessageList');
   if (limit == 1) { limit = 0 };
   var position = data.position || 0;
   var fetchmessages = (data.fetchMessages && !data.fetchThreads) ? true : false;
-console.log('fetchmessages='+fetchmessages+' data='+data.fetchMessages +'/'+ data.fetchThreads);
   response[0] = {
     'accountId':account, 
     'filter':data.filter, 
@@ -464,10 +464,14 @@ console.log('fetchmessages='+fetchmessages+' data='+data.fetchMessages +'/'+ dat
                 response[1].list = result;
                 res.status('200').send(JSON.stringify([['messageList',response[0],seq],['messages',response[1],seq]]));
               });
+              messagePromise.catch(function(err){ log(err); });
             }
           });
+          threadPromise.catch(function(err){ log(err); });
         });
+        sortPromise.catch(function(err){ log(err); });
       });
+      searchPromise.catch(function(err){ log(err); });
     }
   });
 }
@@ -488,7 +492,6 @@ _getMessages = function(token,idlist) {
         var myuid = uid;
         return getMessage(token,folder,uid);
       }).then(function(result){
-        console.log('got result for uid='+uid);
         messages.push(result);
       });
     });
@@ -500,7 +503,6 @@ _getMessages = function(token,idlist) {
   
 getMessage = function(token,folder,uid) {
   return new Promise(function(yay,nay){
-    console.log('in getMessage token='+token+' folder='+folder+' uid='+uid);
     var imap = state.active[token].imap;
     var id = Base64.encode(folder+"\t"+uid);
     var thismsg = {'id':id,'blobId':id,threadId:id,mailboxIds:[folder],'preview':'','textBody':'','htmlBody':'','attachments':[],'attachedMessages':[]};
@@ -627,7 +629,9 @@ getMessage = function(token,folder,uid) {
           });
         });
       });
-    }); // end of folderPromise.then
+      promise1.catch(function(err){ log(err); });
+    });
+    selectPromise.catch(function(err){ log(err); });
   }); // end of promise
 };
 
@@ -685,6 +689,7 @@ function setMessages(token,data,seq,res) {
     var purgePromise = purgeMessages(token,data.destroy);
     purgePromise.then(function(result){
     });
+    purgePromise.catch(function(err){ log(err); });
   }
     
   
