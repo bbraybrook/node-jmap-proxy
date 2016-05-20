@@ -12,9 +12,12 @@ var app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended: true})); 
 var textmode = (config.Server['utf-8'] == true) ? 'UTF-8' : 'US-ASCII';
-
 var state = { 'auth':{}, 'active':{} };
-module.exports = state;
+
+if (process.env.NODE_ENV === 'development') {
+  var errorhandler = require('errorhandler');
+  app.use(errorhandler())
+};
 
 app.options('*',function(req,res) {
   res.set({
@@ -117,6 +120,9 @@ app.post('/jmap',function (req,res) {
         break;
       case 'getMessageList':
         getMessageList(token,data,seq,res);
+        break;
+      case 'setMessages':
+        setMessages(token,data,seq,res);
         break;
     }
   }
@@ -324,6 +330,7 @@ iterate_getMailboxes = function(response,boxes,parentmb) {
 };
 
 function getMessageList(token,data,seq,res) {
+console.log('in getMessageList');
   var response = [];
   var sort = data.sort;
   var direction = 'decending'; // default sort order
@@ -340,6 +347,7 @@ function getMessageList(token,data,seq,res) {
   if (limit == 1) { limit = 0 };
   var position = data.position || 0;
   var fetchmessages = (data.fetchMessages && !data.fetchThreads) ? true : false;
+console.log('fetchmessages='+fetchmessages+' data='+data.fetchMessages +'/'+ data.fetchThreads);
   response[0] = {
     'accountId':account, 
     'filter':data.filter, 
@@ -391,24 +399,28 @@ function getMessageList(token,data,seq,res) {
           }
           console.log(state.active[token].username+'/'+token+': '+cmd);
           imap._enqueue(cmd,function(err,result){
-            yay(result);
+            if (result.length > limit) {
+              yay(result.slice(0,limit));
+            } else {
+              yay(result);
+            }
           });
         } else {
-          yay('1:*') ; // no search, let sort see all messages
+          yay(['1:*']) ; // no search, let sort see all messages
         }
       });
       searchPromise.then(function(result) {
         var uidlist = result;
         var sortPromise = new Promise(function(yay, nay) {
-          if (uidlist.length > 1) {
-            var cmd = 'UID SORT (' + sort.toUpperCase() + ') UTF-8 '+result.join(',');
-            console.log(state.active[token].username+'/'+token+': '+cmd);
-            imap._enqueue(cmd,function(err,result){
+          var cmd = 'UID SORT (' + sort.toUpperCase() + ') UTF-8 '+result.join(',');
+          console.log(state.active[token].username+'/'+token+': '+cmd);
+          imap._enqueue(cmd,function(err,result){
+            if (result.length > limit) {
+              yay(result.slice(0,limit));
+            } else {
               yay(result);
-            });
-          } else {
-            yay(result); // no need to sort
-          }
+            }
+          });
         });
 
         sortPromise.then(function(result) {
@@ -432,7 +444,7 @@ function getMessageList(token,data,seq,res) {
                   if (pos == 0) { // message is the start of a thread
                     threads.push(Base64.encode(folder+"\t"+uids[k]));
                   } else if (pos > 0) { // message is not the start of a thread
-                    threads.push(Base64.encode(folder+"\t"+arr[0]));
+                    threads.push(Base64.encode(folder+"\t"+result[i][0]));
                   }
                 }
               }
@@ -446,7 +458,12 @@ function getMessageList(token,data,seq,res) {
             } else {
               var msglist = response[0].messageIds.slice();
               response[1] = {};
-              iterate_getMessages(token,response,msglist,res,seq,'getMessageList');
+              response[1] = {'accountId':state.active[token].username,'state':state.active[token].state,'notFound':null};
+              var messagesPromise = _getMessages(token,msglist);
+              messagesPromise.then(function(result){
+                response[1].list = result;
+                res.status('200').send(JSON.stringify([['messageList',response[0],seq],['messages',response[1],seq]]));
+              });
             }
           });
         });
@@ -455,145 +472,175 @@ function getMessageList(token,data,seq,res) {
   });
 }
 
-iterate_getMessages = function(token,response,msglist,res,seq,mode) {
+_getMessages = function(token,idlist) {
   var imap = state.active[token].imap;
-
-  var index = (response[1]) ? 1 : 0;
-  
-  if (!response[index].accountId) {
-    response[index] = {'accountId':state.active[token].username,'state':state.active[token].state,'notFound':null,'list':[]};
-  }
-
-  var curbox = null;
-  if (imap._box && imap._box.name) {
-    curbox = imap._box.name;
-  }
-  if (msglist.length > 0) {
-    var id = msglist.shift();
-    var uid;
-    var a = Base64.decode(id).split("\t");
-    var folder = a[0];
-    var mid = a[1];
-    var uid = a[2];
-    if (folder !== curbox) {
-      msglist.unshift(id);
-      imap.openBox(folder,function(err,box){
-        console.log(state.active[token].username+'/'+token+': switching to folder '+folder+' for mid '+mid);
-        iterate_getMessages(token,response,msglist,res,seq,mode);
+  return new Promise(function(yay, nay) {
+    var promise = Promise.resolve(null);
+    var messages = [];
+    idlist.forEach(function(id){
+      var a = Base64.decode(id).split("\t");
+      var folder = a[0];
+      var uid = a[1];
+      promise = promise.then(function() {
+        var myuid = uid;
+        return getMessage(token,folder,uid);
+      }).then(function(result){
+        console.log('got result for uid='+uid);
+        messages.push(result);
       });
-    } else {
-      var fetch;
-      if (uid) {
-        console.log(state.active[token].username+'/'+token+': fetching struct,size,headers from folder '+folder+' for uid '+uid);
-        fetch = imap.fetch(uid,{'struct':true,'size':true,'bodies':['HEADER']});
-      } else {
-        console.log(state.active[token].username+'/'+token+': fetching struct,size,headers from folder '+folder+' for mid '+mid);
-        fetch = imap.seq.fetch(mid,{'struct':true,'size':true,'bodies':['HEADER']});
-      }
+    });
+    return promise.then(function() {
+      yay(messages);
+    });
+  });
+}
+  
+getMessage = function(token,folder,uid) {
+  return new Promise(function(yay,nay){
+    console.log('in getMessage token='+token+' folder='+folder+' uid='+uid);
+    var imap = state.active[token].imap;
+    var id = Base64.encode(folder+"\t"+uid);
+    var thismsg = {'id':id,'blobId':id,threadId:id,mailboxIds:[folder],'preview':'','textBody':'','htmlBody':'','attachments':[],'attachedMessages':[]};
+    // use these to sort out how to retrieve the body
+    var hasText = false;
+    var hasHtml = false;
+    var bodyIsMessage = true;
+    var selectPromise = selectFolder(token,folder);
+    selectPromise.then(function(){
+      var promise1 = new Promise(function(yay,nay){
+        var fetch = imap.fetch(uid,{'struct':true,'size':true,'bodies':['HEADER']});
+        fetch.on('message',function(msgevent,thismsgid){
+          msgevent.on('attributes',function(attrs){
+            thismsg.isUnread = attrs.flags.indexOf('\Seen') > -1 ? false : true;
+            thismsg.isFlagged = attrs.flags.indexOf('\Flagged') > -1 ? true : false;
+            thismsg.isAnswered = attrs.flags.indexOf('\Answered') > -1 ? true : false;
+            thismsg.isDraft = attrs.flags.indexOf('\Draft') > -1 ? true : false;
+            thismsg.date = attrs.date;
+            thismsg.size = attrs.size;
 
-      // use these to determine when we can retrieve the body
-      var hasHeaders = false;
-      var hasAttributes = false;
-
-      // use these to sort out how to retrieve the body
-      var hasText = false;
-      var hasHtml = false;
-      var bodyIsMessage = true;
-
-      fetch.on('message',function(msgevent,thismsgid){
-        var thismsg = {'id':id,'blobId':id,threadId:id,mailboxIds:[folder],'preview':'','textBody':'','htmlBody':'','attachments':[],'attachedMessages':[]};
-        msgevent.on('attributes',function(attrs){
-          thismsg.isUnread = attrs.flags.indexOf('\Seen') > -1 ? false : true;
-          thismsg.isFlagged = attrs.flags.indexOf('\Flagged') > -1 ? true : false;
-          thismsg.isAnswered = attrs.flags.indexOf('\Answered') > -1 ? true : false;
-          thismsg.isDraft = attrs.flags.indexOf('\Draft') > -1 ? true : false;
-          thismsg.date = attrs.date;
-          thismsg.size = attrs.size;
-          uid = attrs.uid;
-
-          // sort out attachments
-          var structjunk = attrs.struct.shift();
-          for (var i in attrs.struct) {
-            var obj = attrs.struct[i][0];
-            if (!hasText && obj.type == 'text' && obj.subtype == 'plain') {
-              hasText = {'part':obj.partID,'encoding':obj.encoding};
-              bodyIsMessage = false;
-            } else if (!hasHtml && obj.type == 'text' && obj.subtype == 'html') {
-              hasHtml = {'part':obj.partID,'encoding':obj.encoding};
-              bodyIsMessage = false;
-            } else {
-              // an attachment we should track
-              var attach = {
-                'blobId': id + Base64.encode("\tBody."+obj.partID),
-                'type': obj.type + '/' + obj.subtype,
-                'name': obj.description,
-                'size': obj.size,
-                'cid': 'TDB',
-                'isInline': (obj.disposition && obj.disposition.type && obj.disposition.type == 'inline') ? true : false,
-                'width': null,
-                'height': null
-              };
-              thismsg.attachments.push(attach);
-            }
-          }
-          hasAttributes = true;
-          if (hasHeaders) {
-            getMessageBody(token,response,thismsg,uid,res,seq,bodyIsMessage,hasText,hasHtml,mode,msglist);
-          }
-        });
-        msgevent.on('body',function(stream,info){
-          var buffer = '';
-          stream.on('data',function(chunk){
-            buffer += chunk;
-          });
-          stream.on('end',function(){
-            var headers = {};
-            var a = buffer.split("\n");
-            var hdr = '';
-            for (var j in a) {
-              a[j] = a[j].replace(/\r/g,'');
-              if (a[j].charAt(0) == ' ' || a[j].charAt(0) == "\t") {
-                a[j] = a[j].replace(/\t/g,'');
-                headers[hdr] += ' ' + a[j];
+            // sort out attachments
+            var structjunk = attrs.struct.shift();
+            for (var i in attrs.struct) {
+              var obj = attrs.struct[i][0];
+              if (!hasText && obj.type == 'text' && obj.subtype == 'plain') {
+                hasText = {'part':obj.partID,'encoding':obj.encoding};
+                bodyIsMessage = false;
+              } else if (!hasHtml && obj.type == 'text' && obj.subtype == 'html') {
+                hasHtml = {'part':obj.partID,'encoding':obj.encoding};
+                bodyIsMessage = false;
               } else {
-                var b = a[j].split(': ');
-                hdr = b.shift().toLowerCase();
-                if (headers[b[0]]) {
-                  headers[hdr] += "\n" + b.join(': ');
-                } else {
-                  headers[hdr] = b.join(': ');
-                }
+                // an attachment we should track
+                var attach = {
+                  'blobId': id + Base64.encode("\tBody."+obj.partID),
+                  'type': obj.type + '/' + obj.subtype,
+                  'name': obj.description,
+                  'size': obj.size,
+                  'cid': 'TDB',
+                  'isInline': (obj.disposition && obj.disposition.type && obj.disposition.type == 'inline') ? true : false,
+                  'width': null,
+                  'height': null
+                };
+                thismsg.attachments.push(attach);
               }
             }
-            thismsg.headers = headers;
-            thismsg.sender = parseToEmailer(headers['return-path']);
-            thismsg.from = parseToEmailer(headers['from']);
-            thismsg.to = parseToEmailer(headers['to']);
-            thismsg.cc = parseToEmailer(headers['cc']);
-            thismsg.bcc = parseToEmailer(headers['bcc']);
-            thismsg.replyto = parseToEmailer(headers['reply-to']);
-            thismsg.subject = headers['subject'];
-            hasHeaders = true;
-            if (hasAttributes) {
-              getMessageBody(token,response,thismsg,uid,res,seq,bodyIsMessage,hasText,hasHtml,mode,msglist);
-            }
+          });
+          msgevent.on('body',function(stream,info){
+            var buffer = '';
+            stream.on('data',function(chunk){
+              buffer += chunk;
+            });
+            stream.on('end',function(){
+              var headers = {};
+              var a = buffer.split("\n");
+              var hdr = '';
+              for (var j in a) {
+                a[j] = a[j].replace(/\r/g,'');
+                if (a[j].charAt(0) == ' ' || a[j].charAt(0) == "\t") {
+                  a[j] = a[j].replace(/\t/g,'');
+                  headers[hdr] += ' ' + a[j];
+                } else {
+                  var b = a[j].split(': ');
+                  hdr = b.shift().toLowerCase();
+                  if (headers[b[0]]) {
+                    headers[hdr] += "\n" + b.join(': ');
+                  } else {
+                    headers[hdr] = b.join(': ');
+                  }
+                }
+              }
+              thismsg.headers = headers;
+              thismsg.sender = parseToEmailer(headers['return-path']);
+              thismsg.from = parseToEmailer(headers['from']);
+              thismsg.to = parseToEmailer(headers['to']);
+              thismsg.cc = parseToEmailer(headers['cc']);
+              thismsg.bcc = parseToEmailer(headers['bcc']);
+              thismsg.replyto = parseToEmailer(headers['reply-to']);
+              thismsg.subject = headers['subject'];
+            });
+          });
+          msgevent.on('end',function(){
+            yay(); // satisfy promise1
+          });
+        }); // end of fetch.on
+      }); // end of promise1
+      promise1.then(function(){
+        console.log(state.active[token].username+'/'+token+': requesting body for uid '+uid+' bodyIsMessage='+bodyIsMessage+' hasHtml='+hasHtml+' hasText='+hasText);
+        var fetch;
+        var buffer = '';
+        if (bodyIsMessage == true) {
+          fetch = imap.fetch(uid,{'bodies':['TEXT']});
+        } else if (hasHtml) {
+          fetch = imap.fetch(uid,{'bodies':[hasHtml.part]});
+        } else if (hasText) {
+          fetch = imap.fetch(uid,{'bodies':[hasText.part]});
+        }
+        fetch.on('message',function(msgevent,thismsgid){
+          msgevent.on('body',function(stream,info){
+            var buffer = '';
+            stream.on('data',function(chunk){
+              buffer += chunk;
+            });
+            stream.on('end',function(){
+              if (hasHtml) {
+                thismsg.htmlBody = buffer;
+              } else {
+                var body = '';
+                if (thismsg.headers['content-transfer-encoding'] && thismsg.headers['content-transfer-encoding'] == 'base64') {
+                  body = Base64.decode(buffer);
+                } else if (hasText && hasText.encoding == 'quoted-printable') {
+                  body = quotedPrintable.decode(buffer);
+                } else {
+                  body = buffer;
+                }
+                if (isHtml(body)) {
+                  thismsg.htmlBody = body;
+                } else {
+                  thismsg.textBody = body;
+                }
+              }
+              thismsg.preview = preview_from_body(thismsg.textBody || thismsg.htmlBody);
+              yay(thismsg); // return to getMessage() caller
+            });
           });
         });
-        msgevent.on('end',function(){
-console.log('end of msgevent');
-        });
+      });
+    }); // end of folderPromise.then
+  }); // end of promise
+};
+
+selectFolder = function(token,folder) {
+  var imap = state.active[token].imap;
+  return new Promise(function(yay,nay){
+    var curbox = (imap._box && imap._box.name) ? imap._box.name : null;
+    if (curbox == folder) {
+      yay();
+    } else {
+      imap.openBox(folder,function(err,box){
+        console.log(state.active[token].username+'/'+token+': switching to folder '+folder);
+        yay();
       });
     }
-  } else {
-    console.log(state.active[token].username+'/'+token+': end of messages to iterate through');
-    if (mode == 'getMessageList') {
-      if (response[1]) {
-        res.status('200').send(JSON.stringify([['messageList',response[0],seq],['messages',response[1],seq]]));
-      } else {
-        res.status('200').send(JSON.stringify([['messageList',response[0],seq]]));
-      }
-    }
-  }
+  });
 };
 
 parseToEmailer = function(str) {
@@ -612,51 +659,6 @@ parseToEmailer = function(str) {
   }
 };
 
-getMessageBody = function(token,response,thismsg,uid,res,seq,bodyIsMessage,hasText,hasHtml,mode,msglist) {
-  console.log(state.active[token].username+'/'+token+': requesting body for uid '+uid+' bodyIsMessage='+bodyIsMessage+' hasHtml='+hasHtml+' hasText='+hasText);
-  var index = (response[1]) ? 1 : 0;
-  var imap = state.active[token].imap;
-  var fetch;
-  var buffer = '';
-  if (bodyIsMessage == true) {
-    fetch = imap.fetch(uid,{'bodies':['TEXT']});
-  } else if (hasHtml) {
-    fetch = imap.fetch(uid,{'bodies':[hasHtml.part]});
-  } else if (hasText) {
-    fetch = imap.fetch(uid,{'bodies':[hasText.part]});
-  }
-  fetch.on('message',function(msgevent,thismsgid){
-    msgevent.on('body',function(stream,info){
-      var buffer = '';
-      stream.on('data',function(chunk){
-        buffer += chunk;
-      });
-      stream.on('end',function(){
-        if (hasHtml) {
-          thismsg.htmlBody = buffer;
-        } else {
-          var body = '';
-          if (thismsg.headers['content-transfer-encoding'] && thismsg.headers['content-transfer-encoding'] == 'base64') {
-            body = Base64.decode(buffer);
-          } else if (hasText && hasText.encoding == 'quoted-printable') {
-            body = quotedPrintable.decode(buffer);
-          } else {
-            body = buffer;
-          }
-          if (isHtml(body)) {
-            thismsg.htmlBody = body;
-          } else {
-            thismsg.textBody = body;
-          }
-        }
-        thismsg.preview = preview_from_body(thismsg.textBody || thismsg.htmlBody);
-        response[index].list.push(thismsg);
-        iterate_getMessages(token,response,msglist,res,seq,mode);
-      });
-    });
-  });
-};
-
 preview_from_body = function(str) {
   str = str.substr(0,16000);
   // striptags can't deal with multiline <style> sections
@@ -667,6 +669,35 @@ preview_from_body = function(str) {
   }
   preview = striptags(preview).trim().replace(/&nbsp;/g,' ').substr(0,256);
   return preview;
+};
+
+
+function setMessages(token,data,seq,res) {
+  var imap = state.active[token].imap;
+  if (data.ifInState && data.ifInState != state.active[token].state) {
+    res.status('200').send(JSON.stringify({'type':'stateMismatch','description':'requested state:'+data.ifInState+' does not match current state:'+state.active[token].state}));
+    return;
+  }
+  if (data.destroy) {
+    var purgePromise = purgeMessages(token,data.destroy);
+    purgePromise.then(function(result){
+    });
+  }
+    
+  
+};
+
+function purgeMessages(token,idlist) {
+  var imap = state.active[token].imap;
+  var promise = new Promise(function(yay, nay) {
+    var nullPromise = Promise.resolve(null);
+    for (var i in idlist) {
+      var a = Base64.decode(idlist[i]);
+      var folder = a[0];
+      var uid = a[1];
+    }
+  });
+  return(promise);
 };
 
 var imaphost = config.get('IMAP.host');
