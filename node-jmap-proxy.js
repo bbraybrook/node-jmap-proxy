@@ -477,6 +477,9 @@ _getMessages = function(token,idlist) {
   return new Promise(function(yay, nay) {
     var promise = Promise.resolve(null);
     var messages = [];
+    // sequential promise loop from https://www.joezimjs.com/javascript/patterns-asynchronous-programming-promises/
+    // must be done in sequence as there is no guarantee all messages are from the same folder, and the folder
+    // select could switch folders prior to a message being retrieved if we allow this to run asynchronously
     idlist.forEach(function(id){
       var a = Base64.decode(id).split("\t");
       var folder = a[0];
