@@ -7,7 +7,9 @@
   "Server" {
     "port": 3000,
     "utf-8": true,
-    "threads":"REFERENCES"
+    "threads":"REFERENCES",
+    "uploadPath":"./upload",
+    "uploadExpireLength": 3600
   },
   "Options": {
     "prefer_RFC6154": true,
