@@ -3,11 +3,14 @@ var util = require('util');
 var request = require('request');
 var querystring = require('querystring');
 var expect = require('chai').expect;
+var FormData = require('form-data');
+var fs = require('fs');
 var user = process.env.IMAP_USER;
 var pass = process.env.IMAP_PASS;
 var hostname = 'http://localhost:3000';
 var token;
 var state;
+var blobs = [];
 
 describe('NodeJS IMAP->JMAP Proxy',function() {
   describe('Authentication',function() {
@@ -376,9 +379,122 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
       it('messageIds.length == 10',function() {
         expect(resdata[0][1].messageIds.length).to.equal(10);
       });
-      it('whatevs',function() {
-        console.log('resdata='+util.inspect(resdata,{'depth':4}));
+//      it('whatevs',function() {
+//        console.log('resdata='+util.inspect(resdata,{'depth':4}));
+//      });
+    });
+  });
+  describe('Upload',function() {
+    describe('Message 1',function() {
+      this.timeout(10000);
+      var resdata = {};
+      before(function(done) {
+        var form = new FormData();
+        form.append('my_file', fs.createReadStream('./test/messages/ipsum.1'));
+        form.submit({'host':'localhost','port':3000,'path':'/upload','headers':{'Authorization':token}}, function(err, res) {
+          var body = '';
+          res.on('data',function(chunk) {
+            body += chunk;
+          });
+          res.on('end',function() {
+            resdata = JSON.parse(body);
+            blobs.push(resdata['blobId']);
+            resdata.code = res.statusCode;
+            done();
+          });
+        });
+      });
+      it('statusCode == 201',function() {
+        expect(resdata.code).to.equal(201);
+      });
+      it('acountId == '+user,function() {
+        expect(resdata.accountId).to.equal(user);
+      });
+      it('blobId == string',function() {
+        expect(resdata.blobId).to.be.a('string');
+      });
+      it('type == string',function() {
+        expect(resdata.type).to.be.a('string');
+      });
+      it('expires == number',function() {
+        expect(resdata.expires).to.be.a('number');
+      });
+    });
+    describe('Message 2',function() {
+      this.timeout(10000);
+      var resdata = {};
+      before(function(done) {
+        var form = new FormData();
+        form.append('my_file', fs.createReadStream('./test/messages/ipsum.2'));
+        form.submit({'host':'localhost','port':3000,'path':'/upload','headers':{'Authorization':token}}, function(err, res) {
+          var body = '';
+          res.on('data',function(chunk) {
+            body += chunk;
+          });
+          res.on('end',function() {
+            resdata = JSON.parse(body);
+            blobs.push(resdata['blobId']);
+            resdata.code = res.statusCode;
+            done();
+          });
+        });
+      });
+      it('statusCode == 201',function() {
+        expect(resdata.code).to.equal(201);
+      });
+    });
+    describe('Message 3',function() {
+      this.timeout(10000);
+      var resdata = {};
+      before(function(done) {
+        var form = new FormData();
+        form.append('my_file', fs.createReadStream('./test/messages/ipsum.3'));
+        form.submit({'host':'localhost','port':3000,'path':'/upload','headers':{'Authorization':token}}, function(err, res) {
+          var body = '';
+          res.on('data',function(chunk) {
+            body += chunk;
+          });
+          res.on('end',function() {
+            resdata = JSON.parse(body);
+            blobs.push(resdata['blobId']);
+            resdata.code = res.statusCode;
+            done();
+          });
+        });
+      });
+      it('statusCode == 201',function() {
+console.log('blobs='+blobs);
+        expect(resdata.code).to.equal(201);
+      });
+    });
+      describe('import 3 messages',function() {
+      this.timeout(10000);
+      var resdata = {};
+      before(function(done) {
+        var postData = [[
+          'importMessages',
+          {
+            'accountId': user,
+            'messages': {
+              'mess1':{'blobId':blobs[0],'mailboxIds':['cristina'],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
+              'mess2':{'blobId':blobs[1],'mailboxIds':['cristina'],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
+              'mess3':{'blobId':blobs[2],'mailboxIds':['cristina'],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
+            }
+          },
+          '#0'
+        ]]; 
+        request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
+console.log('body='+body);
+          resdata = JSON.parse(body);
+          resdata.code = res.statusCode;
+          state = resdata.state;
+          done();
+        });
+      });
+      it('statusCode == 201',function() {
+        expect(resdata.code).to.equal(201);
       });
     });
   });
+
 });

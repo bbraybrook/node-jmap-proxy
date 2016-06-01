@@ -11,7 +11,7 @@ var isHtml = require('is-html');
 var config = require('config');
 var busboy = require('express-busboy');
 var app = express();
-busboy.extend(app, { upload: true, path: './upload'} );
+busboy.extend(app, { upload: true, path: config.Server.uploadPath} );
 var textmode = (config.Server['utf-8'] == true) ? 'UTF-8' : 'US-ASCII';
 var state = { 'auth':{}, 'active':{} };
 
@@ -72,7 +72,7 @@ function authenticate(req,res) {
       };
       delete state.auth[req.body.token]; // remove auth state token
       console.log(username+'/'+req.body.token+': auth successful. new token='+token);
-      var response = {'username':username,'accessToken':token,'versions':[1],'extensions':[],'api':'/jmap/','eventSource':'/event','upload':'/upload','download':'/download','api':'/jmap','eventSource':'/event','upload':'/upload','download':'/download'};
+      var response = {'username':username,'accessToken':token,'versions':[1],'extensions':[],'apiUrl':'/jmap/','eventSourceUrl':'/event','uploadUrl':'/upload','downloadUrl':'/download','api':'/jmap','eventSource':'/event','upload':'/upload','download':'/download'};
       res.status('201').send(JSON.stringify(response));
     });
     imap.once('error', function() {
@@ -115,7 +115,6 @@ app.post('/upload',function (req,res) {
           // don't really care about errors
         });
       });
-      console.log('account='+user+' uuid='+fobj.uuid+' filename='+fobj.filename+' blobId='+blobId);
       var response = {'accountId':user,'blobId':blobId,'type':fobj.mimetype,'expires':(unixtime() + config.Server.uploadExpireLength)};
       console.log(state.active[token].username+'/'+token+': uploaded '+fobj.filename+' as '+blobId);
       res.status('201').send(JSON.stringify(response));
@@ -137,7 +136,7 @@ app.post('/jmap',function (req,res) {
     return;
   }
 
-  if (data.ifInState && data.ifInState != state.active[token].state) {
+  if (data && data.ifInState && data.ifInState != state.active[token].state) {
     console.log(state.active[token].username+'/'+token+': state mismatch');
     res.status('200').send(JSON.stringify({'type':'stateMismatch','description':'requested state:'+data.ifInState+' does not match current state:'+state.active[token].state}));
     return;
@@ -494,6 +493,7 @@ function getMessageList(token,data,seq,res) {
           });
           threadPromise.then(function(result){
             response[0].threadIds = result;
+            response[0].total = response[0].messageIds.length;
             if (!fetchmessages) {
               res.status('200').send(JSON.stringify([['messageList',response[0],seq]]));
             } else {
@@ -679,12 +679,13 @@ getMessage = function(token,folder,uid) {
 selectFolder = function(token,folder,force) {
   var imap = state.active[token].imap;
   return new Promise(function(yay,nay){
+    if (force) imap._box = '';
     var curbox = (imap._box && imap._box.name) ? imap._box.name : null;
-    if (curbox == folder && !force) {
+    if (curbox == folder) {
       yay();
     } else {
       imap.openBox(folder,function(err,box){
-        console.log(state.active[token].username+'/'+token+': switching to folder '+folder);
+        console.log(state.active[token].username+'/'+token+': selected folder '+folder);
         yay(box);
       });
     }
@@ -764,49 +765,72 @@ preview_from_body = function(str) {
 function importMessages(token,data,seq,res) {
   var imap = state.active[token].imap;
   var user = data.accountId || state.active[token].username;
-  var response = [];
+  var response = {'created':{},'notCreated':{}};
   if (!data.messages) {
     res.status('200').send(JSON.stringify({'type':'invalidArguments','description':'must provide messages'}));
     return;
   }
-  var promises = [];
-  data.messages.forEach(function(msg){
-    var promise = new Promise(function(yay,nay){
+
+  var toDo = [];
+  var clientIds = Object.keys(data.messages);
+  
+  return new Promise(function(yay, nay) {
+    var promise = Promise.resolve(null);
+    var messages = [];
+    // sequential promise loop from https://www.joezimjs.com/javascript/patterns-asynchronous-programming-promises/
+    // must be done in sequence so we can get uidnext each time
+    Object.keys(data.messages).forEach(function(clientId) {
+      var msg = data.messages[clientId];
       var file = config.Server.uploadPath + '/' + msg.blobId;
-      fs.exists(file, function(exists) {
-        if (!exists) {
-          if (!response.notCreated) response.notCreated = {};
-          response.notCreated[blobId] = {'type':'notFound','description':'blobId not found. perhaps expired?'};
-          yay();
-        } else {
-          var msgBuffer = fs.readFileSync(file);
-          var folder = msg.mailboxIds[0]; // only support a single folder
-          var flagState = flags_from_msg(msg);
-          var selectPromise = selectFolder(token,folder,true);
-          var stats = fs.statSync(file);
-          var size = stats.size;
-          selectPromise.then(function(box) {
-            var uid = box.uidnext; // select tells us what the UID will be
-            imap.append(msgBuffer,{'mailbox':folder},function(err){
-              if (err) {
-                response.notCreated[blobId] = {'type':'internalError','description':'imap error: '+err};
-              } else {
-                if (!response.created) response.created = {};
-                var id = newId(folder,uid);
-                response.created[id] = {'id':id,'threadId':'id','blobId':blobId,'size':size};
-                yay();
-              }
-            });
+      if (!fs.existsSync(file)) {
+        response.notCreated[clientId] = {'type':'notFound','description':'blobId not found. perhaps expired?'};
+      } else {
+        promise = promise.then(function() {
+          return appendMessage(token,clientId,msg).then(function(res){
+            if (res.data.type) {
+              // error
+              response.notCreated[res.clientId] = res.data;
+            } else {
+              response.created[res.clientId] = res.data;
+            }
           });
+        });
+      }
+    });
+    return promise.then(function() {
+      res.status('200').send(JSON.stringify([['messages',response,seq]]));
+    });
+  });
+}
+
+function appendMessage(token,clientId,msg) {
+  var imap = state.active[token].imap;
+  var file = config.Server.uploadPath + '/' + msg.blobId;
+  var folder = msg.mailboxIds[0]; // only support a single folder
+  var flagState = flags_from_msg(msg);
+  var stats = fs.statSync(file);
+  var size = stats.size;
+  var msgBuffer = fs.readFileSync(file);
+  return new Promise(function(yay,nay){
+    var selectPromise = selectFolder(token,folder,true);
+    selectPromise.then(function(box) {
+      var uid = box.uidnext; // select tells us what the UID will be
+      console.log(state.active[token].username+'/'+token+': calling imap APPEND');
+      imap.append(msgBuffer,{'mailbox':folder,'flags':flagState.plusFlags},function(err){
+        if (err) {
+          if (err.textCode == 'OVERQUOTA') {
+            yay({'clientId':clientId,'data':{'type':'maxQuotaReached','description':'imap error: '+err}});
+          } else {
+            yay({'clientId':clientId,'data':{'type':'internalError','description':'imap error: '+err}});
+          }
+        } else {
+          var id = newId(folder,uid);
+          yay({'clientId':clientId,'data':{'id':id,'threadId':id,'blobId':id,'size':size}});
         }
       });
     });
-    promises.push(promise);
   });
-  Promise.all(promises,function(){
-    res.status('200').send(JSON.stringify([['messages',response,seq]]));
-  });
-}
+};
     
 function newId(folder,uid) {
   return Base64.encode(folder+"\t"+uid)
@@ -919,7 +943,7 @@ function setMessages(token,data,seq,res) {
       promises.push(msgPromise);
     });
     Promise.all(promises).then(function() {
-      res.status('200').send(JSON.stringify([['messages',response,seq]]));
+      res.status('201').send(JSON.stringify([['messages',response,seq]]));
     });
   }
 };
@@ -1048,6 +1072,7 @@ unixtime = function() {
   return parseInt((new Date).getTime());
 }
 
+// cleanup scans upload dirs and removes files that have expired
 cleanup = function() {
   fs.readdir(config.Server.uploadPath,function(err,files) {
     files.forEach(function(file){

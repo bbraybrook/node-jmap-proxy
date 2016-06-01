@@ -9,7 +9,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "body-parser": "^1.15.0",
     "express": "^4.13.4",
     "imap": "^0.8.17",
     "md5": "^2.1.0",
@@ -20,7 +19,9 @@
     "striptags":"^2.1.1",
     "quoted-printable":"^1.0.0",
     "is-html":"^1.0.0",
-    "imap-promise":"^1.0.2"
+    "imap-promise":"^1.0.2",
+    "rmdir":"^1.2.0",
+    "express-busboy":"^2.5.0"
   },
   "devDependencies": {
     "chai":"^3.5.0",
