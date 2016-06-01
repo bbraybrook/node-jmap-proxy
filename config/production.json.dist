@@ -9,7 +9,8 @@
     "utf-8": true,
     "threads":"REFERENCES",
     "uploadPath":"./upload",
-    "uploadExpireLength": 3600
+    "uploadExpireLength": 3600,
+    "cleanupTime": 90000
   },
   "Options": {
     "prefer_RFC6154": true,
