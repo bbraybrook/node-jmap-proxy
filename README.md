@@ -10,13 +10,13 @@ npm install
   or
 npm install --production   (to skip the testing modules)
 
-cp config/production.json.dist config/production.json
+cp config/production.json.dist config/default.json
 
-edit config/production.json
+edit config/default.json
 
 ** Running **
 
-NODE_ENV=production node ./node-jmap-proxy.js
+node ./node-jmap-proxy.js
 
 ** Test Suite **
 
