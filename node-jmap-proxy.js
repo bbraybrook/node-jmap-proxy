@@ -1,6 +1,8 @@
 var util = require('util');
+var fs = require('fs');
 var express = require('express');
 var bodyParser = require('body-parser');
+var busboy = require('express-busboy');
 var Imap = require('imap');
 var randomToken = require('random-token').create('abcdefghijklmnopqrstuvwxzyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
 var Base64 = require('js-base64').Base64;
@@ -9,8 +11,10 @@ var quotedPrintable = require('quoted-printable');
 var isHtml = require('is-html');
 var config = require('config');
 var app = express();
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({extended: true})); 
+//app.use(bodyParser.json());
+//app.use(bodyParser.urlencoded({extended: true})); 
+busboy.extend(app, { upload: true, path: './upload'} );
+//busboy.extend(app, { upload: true } );
 var textmode = (config.Server['utf-8'] == true) ? 'UTF-8' : 'US-ASCII';
 var state = { 'auth':{}, 'active':{} };
 
@@ -92,6 +96,40 @@ function authenticate(req,res) {
     res.status('400').end();
   }
 };
+
+app.post('/upload',function (req,res) {
+  var token = req.get('Authorization');
+  if (! token) {
+    // token not provided, don't allow
+    console.log('token was not provided');
+    res.status('401').end();
+  } else if (state.active[token] == undefined) {
+    console.log(token+': token does not exist');
+    // token no longer active, don't allow
+    res.status('401').send();
+  }
+  var user = req.get('X-JMAP-AccountId') || state.active[token].username;
+  console.log(util.inspect(req));
+  var files = Object.keys(req.files);
+  if (files.length !== 1) {
+    res.status('400').send('Only upload one file at a time');
+  } else {
+    var fobj = req.files[files[0]];
+    var blobId = Base64.encode([user,fobj.uuid,fobj.filename].join("\t"))+'.'+(new Date).getTime();
+    fs.rename(fobj.file,config.Server.uploadPath + '/' + blobId,function(err) {
+      // clean up temp file upload dirs
+      fs.rmdir(config.Server.uploadPath + '/' + fobj.uuid + '/' + fobj.field,function(err) {
+        fs.rmdir(config.Server.uploadPath + '/' + fobj.uuid,function(err) {
+          // don't really care about errors
+        });
+      });
+      console.log('account='+user+' uuid='+fobj.uuid+' filename='+fobj.filename+' blobId='+blobId);
+      var response = {'accountId':user,'blobId':blobId,'type':fobj.mimetype,'expires':((new Date).getTime() + config.Server.uploadExpireLength)};
+      console.log(state.active[token].username+'/'+token+': uploaded '+fobj.filename+' as '+blobId);
+      res.status('201').send(JSON.stringify(response));
+    });
+  }
+});
 
 app.post('/jmap',function (req,res) {
   var token = req.get('Authorization');
@@ -371,7 +409,7 @@ function getMessageList(token,data,seq,res) {
       var uids = [];
       var uidlist;
       var searchPromise = new Promise(function(yay, nay) {
-        var cmd = 'UID SEARCH ';
+        var cmd = 'UID SEARCH NOT DELETED '; // jmap never uses deleted state
         if (Object.keys(data.filter).length > 1) {
           if ('after' in data.filter) cmd += 'SINCE "' + data.filter.after + '"';
           if ('minsize' in data.filter) cmd += 'LARGER "' + data.filter.minsize + '"';
@@ -650,6 +688,48 @@ selectFolder = function(token,folder) {
   });
 };
 
+setFlags = function(token,folder,uid,mode,flags) {
+  var imap = state.active[token].imap;
+  var selectPromise = selectFolder(token,folder);
+  selectPromise.then(function() {
+    return new Promise(function(yay,nay) {
+      if (flags.length > 0) {
+        var cmd = 'UID STORE '+uid+' '+mode+' ('+flags.join(' ')+')';
+        console.log(state.active[token].username+'/'+token+': '+cmd);
+        imap._enqueue(cmd,function(err,result){
+          if (err) {
+            console.log(state.active[token].username+'/'+token+': '+err);
+            yay();
+          } else {
+            yay(true);
+          }
+        });
+      } else {
+        yay();
+      }
+    });
+  });
+};
+
+moveMessage = function(token,folder,uid,destfolder) {
+  var imap = state.active[token].imap;
+  var selectPromise = selectFolder(token,folder);
+  selectPromise.then(function() {
+    return new Promise(function(yay,nay) {
+      var cmd = 'UID MOVE '+uid+' "'+destfolder+'"';
+      console.log(state.active[token].username+'/'+token+': '+cmd);
+      imap._enqueue(cmd,function(err,result){
+        if (err) {
+          console.log(state.active[token].username+'/'+token+': '+err);
+          yay();
+        } else {
+          yay(true);
+        }
+      });
+    });
+  });
+};
+
 parseToEmailer = function(str) {
   if (str) {
     var res = {'name':'','email':''};
@@ -686,26 +766,204 @@ function setMessages(token,data,seq,res) {
     return;
   }
   if (data.destroy) {
+    // note: we will set \Deleted flag on each message, then purge
     var purgePromise = purgeMessages(token,data.destroy);
     purgePromise.then(function(result){
+      // TBD - respond to client
     });
-    purgePromise.catch(function(err){ log(err); });
+    purgePromise.catch(function(err){ 
+      log(err); 
+      // TBD - respond to client
+    });
+  } else if (data.create) {
+    // TBD
+  } else if (data.update) {
+    var messages = isArray(data.update) ? data.update : [data.update];
+    var response = {};
+    var promises = [];
+    messages.forEach(function(msg){
+      var msgPromise = new Promise(function(msgYay,msgNay) {
+        var msgUpdated = false;
+        if (!msg.id) {
+          response.notUpdated.push({'type':'invalidArguments','description':'must provide message id property'});
+          return;
+        }
+        var a = Base64.decode(msg.id).split("\t");
+        var folder = a[0];
+        var uid = a[1];
+        var selectPromise = selectFolder(token,folder);
+        selectPromise.then(function(){
+          var flagPromise = new Promise(function(yay, nay) {
+            if (msg.isFlagged || msg.isUnread || msg.isAnswered) {
+              // changing flags
+              var plusFlags = [];
+              var minusFlags = [];
+              if ("isFlagged" in msg) {
+                if (msg.isFlagged == true) {
+                  plusFlags.push('\FLAGGED');
+                } else {
+                  minusFlags.push('\FLAGGED');
+                }
+              }
+              if ("isUnread" in msg) {
+                if (msg.isFlagged == true) {
+                  minusFlags.push('\SEEN');
+                } else {
+                  plusFlags.push('\SEEN');
+                }
+              }
+              if ("isAnswered" in msg) {
+                if (msg.isFlagged == true) {
+                  plusFlags.push('\ANSWERED');
+                } else {
+                  minusFlags.push('\ANSWERED');
+                }
+              }
+              var plusPromise = setFlags(token,folder,uid,'+FLAGS',plusFlags);
+              plusPromise.then(function(plusRes) {
+                if (plusRes == true) {
+                  msgUpdated = true;
+                } else {
+                  var myres = {};
+                  myres[msg.id] = {'type':'internalError','description':'failed to store +FLAGS'};
+                  response.notUpdated.push(myres);
+                }
+                var minusPromise = setFlags(token,folder,uid,'-FLAGS',minsFlags);
+                minusPromise.then(function(minusRes) {
+                  if (minusRes == true) {
+                    msgUpdated = true;
+                  } else {
+                    var myres = {};
+                    myres[msg.id] = {'type':'internalError','description':'failed to store -FLAGS'};
+                    response.notUpdated.push(myres);
+                  }
+                  yay();
+                });
+              });
+            } else {
+              yay();
+            }
+          });
+          flagPromise.then(function(){
+            var folderPromise = new Promise(function(yay, nay) {
+              if (msg.mailboxIds) {
+                if (msg.mailboxIds.length > 1) {
+                  // we don't allow a message to exist in multiple mailboxes
+                  if (!response.notUpdated) response.notUpdated = [];
+                  response.notUpdated.push({'type':'invalidArguments','description':'cannot move message into multiple mailboxes'});
+                  yay();
+                } else {
+                  // can move
+                  var newfolder = msg.mailboxIds[0];
+                  if (curfolder !== newfolder) {
+                    var movePromise = moveMessage(token,folder,uid,newfolder);
+                    movePromise.then(function(moveRes){
+                      if (minusRes == true) {
+                        msgUpdated = true;
+                      } else {
+                        var myres = {};
+                        myres[msg.id] = {'type':'internalError','description':'failed to move message'};
+                        response.notUpdated.push(myres);
+                      }
+                      if (msgUpdated) {
+                        if (!response.updated) response.updated = [];
+                        response.updated.push(msg.id);
+                      }
+                    });
+                  } else {
+                    // not actually moving, why bother including the property?
+                    yay();
+                  }
+                }
+              } else {
+                yay();
+              }
+            });
+          });
+          flagPromise.then(function() {
+            msgYay();
+          });
+        });
+      });
+      promises.push(msgPromise);
+    });
+    Promise.all(promises).then(function() {
+      res.status('200').send(JSON.stringify([['messages',response,seq]]));
+    });
   }
-    
-  
 };
 
 function purgeMessages(token,idlist) {
   var imap = state.active[token].imap;
-  var promise = new Promise(function(yay, nay) {
-    var nullPromise = Promise.resolve(null);
-    for (var i in idlist) {
-      var a = Base64.decode(idlist[i]);
+  return new Promise(function(yay,nay){
+    var promises = [];
+    // we need a list of already \Deleted flagged messages, so we can unflag them,
+    // purge, then reflag them
+    var deleted = {};
+    idlist.forEach(function(id){
+      var a = Base64.decode(id).split("\t");
       var folder = a[0];
-      var uid = a[1];
-    }
+      var mid = a[1];
+      if (!deleted[folder]) deleted[folder] = {'current':[],'todo':[]};
+      deleted[folder].todo.push(mid);
+    });
+    Object.keys(deleted).forEach(function(folder){
+      var deletedPromise = new Promise(function(yay,nay){
+        var selectPromise = selectFolder(token,folder);
+        selectPromise.then(function(){
+          var cmd = 'UID SEARCH DELETED';
+          console.log(state.active[token].username+'/'+token+': '+cmd);
+          imap._enqueue(cmd,function(err,result){
+            deleted[folder].current = result;
+            if (result.length > 0) {
+              var flag1promise = new Promise(function(yay2,nay2){
+                var cmd = 'UID STORE ' + result.join(',') + ' -FLAGS (\Deleted)';
+                console.log(state.active[token].username+'/'+token+': '+cmd);
+                imap._enqueue(cmd,function(err,result){ yay(); yay2(); });
+              });
+              promises.push(flag1promise);
+            }
+          });
+        });
+      });
+      promises.push(deletedPromise);
+    });
+    Promise.all(promises).then(function() {
+      // we have finished finding \Deleted messages and temporarily reflagging them
+
+      // must be done in sequence as there is no guarantee all messages are from the same folder, and the folder
+      // select could switch folders prior to a message being deleted if we allow this to run asynchronously
+      var promise = Promise.resolve(null);
+      var deletedPromise = new Promise(function(yay,nay){
+        var selectPromise = selectFolder(token,folder);
+        selectPromise.then(function(){
+          var cmd = 'UID STORE ' + deleted[folder].todo.join(',') + ' +FLAGS (\Deleted)';;
+          console.log(state.active[token].username+'/'+token+': '+cmd);
+          imap._enqueue(cmd,function(err,result){ 
+            var cmd = 'EXPUNGE';
+            console.log(state.active[token].username+'/'+token+': '+cmd);
+            imap._enqueue(cmd,function(err,result){
+              yay(); 
+            });
+          });
+        });
+        selectPromise.catch(function(err){ log(err); });
+      });
+      deletedPromise.then(function(){
+        if (deleted[folder].current.length > 1) {
+          var selectPromise = selectFolder(token,folder);
+          selectPromise.then(function(){
+            var cmd = 'UID STORE ' + result.join(',') + ' -FLAGS (\Deleted)';
+            console.log(state.active[token].username+'/'+token+': '+cmd);
+            imap._enqueue(cmd,function(err,result){ yay(); });
+          });
+        } else {
+          // nothing to reset
+          // return?
+        }
+      });
+    });
   });
-  return(promise);
 };
 
 var imaphost = config.get('IMAP.host');
@@ -721,3 +979,25 @@ app.listen(serverport, function () {
     console.log('proxying IMAP requests to '+imaphost+':'+imapport);
   }
 });
+
+
+cleanup = function() {
+  fs.readdir(config.Server.uploadPath,function(err,files) {
+    files.forEach(function(file){
+      var a = file.match(/\.(\d+)$/);
+      if (a[1]) {
+        console.log("match:"+a[1]+' '+file);
+        if (a[1] > (new Date).getTime() + config.Server.uploadExpireLength) {
+          fs.unlink(config.Server.uploadPath + '/' + file,function(err){
+            if (err) {
+              console.log('cleanup: failed to remove '+file);
+            } else {
+              console.log('cleanup: removed expired upload file '+file);
+            }
+          });
+        }
+      }
+    });
+  });
+};
+cleanup();
