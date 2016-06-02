@@ -101,7 +101,6 @@ app.post('/upload',function (req,res) {
     res.status('401').send();
   }
   var user = req.get('X-JMAP-AccountId') || state.active[token].username;
-  console.log(util.inspect(req));
   var files = Object.keys(req.files);
   if (files.length !== 1) {
     res.status('400').send('Only upload one file at a time');
@@ -155,6 +154,9 @@ app.post('/jmap',function (req,res) {
       break;
     case 'getMailboxUpdates':
       getMailboxUpdates(token,data,seq,res);
+      break;
+    case 'setMailboxes':
+      setMailboxes(token,data,seq,res);
       break;
     case 'getMessageList':
       getMessageList(token,data,seq,res);
@@ -369,6 +371,74 @@ iterate_getMailboxes = function(response,boxes,parentmb) {
       iterate_getMailboxes(response,obj.children,entry.id)
     }
   }
+};
+
+function setMailboxes(token,data,seq,res) {
+  var user = data.accountId || state.active[token].username;
+  var imap = state.active[token].imap;
+  var response = {
+    'accountId': user,
+    'oldState': state.active[token].state,
+    'newState': state.active[token].state,
+    'created': {},
+    'updated': {},
+    'destroyed': {},
+    'notCreated': {},
+    'notUpdated': {},
+    'notDestroyed': {}
+  };
+  var promises = [];
+  if (data.create) {
+    Object.keys(data.create).forEach(function(createId){
+      promises.push(new Promise(function(yay,nay){
+        var mbx = data.create[createId];
+        var id = (mbx.parentId) ? mbx.parentId + '.' + mbx.name : mbx.name;
+// TBD: sort out user defined roles/order
+        imap.addBox(id,function(err){
+          if (err) {
+            if (err.textCode == 'ALREADYEXISTS') {
+              response.notCreated[createId] = {'type':'invalidArguments','description':'mailbox already exists'};
+            } else {
+              response.notCreated[createId] = {'type':'internalError','description':'failed to create mailbox: '+err};
+  console.log(util.inspect(err));
+            }
+          } else {
+            response.created[createId] = {
+              'id': id,
+              'parentId': mbx.parentId,
+              'role': null,
+              'sortOrder': 3,
+              'mustBeOnlyMailbox': true,
+              'mayReadItems': true,
+              'mayAddItems': true,
+              'mayRemoveItems': true,
+              'mayCreateChild': true,
+              'mayRename': true,
+              'mayDelete': true,
+              'totalMessages': 0,
+              'unreadMessages': 0,
+              'totalThreads': 0,
+              'unreadThreads': 0
+            };
+            response.newState = unixtime();
+            console.log(state.active[token].username+'/'+token+': created folder '+id);
+          }
+          yay();
+        });
+      }));
+    });
+  }
+  if (data.update) {
+  }
+  if (data.destroy) {
+  }
+  Promise.all(promises).then(function(){
+    if (Object.keys(response.created).length > 0) {
+      res.status('201').send(JSON.stringify([['mailboxes',response,seq]]));
+    } else {
+      res.status('200').send(JSON.stringify([['mailboxes',response,seq]]));
+    }
+  });
 };
 
 function getMessageList(token,data,seq,res) {
@@ -798,7 +868,7 @@ function importMessages(token,data,seq,res) {
       }
     });
     return promise.then(function() {
-      res.status('200').send(JSON.stringify([['messages',response,seq]]));
+      res.status('201').send(JSON.stringify([['messages',response,seq]]));
     });
   });
 }

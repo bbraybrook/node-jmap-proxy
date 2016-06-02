@@ -5,12 +5,14 @@ var querystring = require('querystring');
 var expect = require('chai').expect;
 var FormData = require('form-data');
 var fs = require('fs');
+var randomToken = require('random-token').create('abcdefghijklmnopqrstuvwxzyABCDEFGHIJKLMNOPQRSTUVWXYZ');
 var user = process.env.IMAP_USER;
 var pass = process.env.IMAP_PASS;
 var hostname = 'http://localhost:3000';
 var token;
 var state;
 var blobs = [];
+var folders = [randomToken(8), randomToken(8), randomToken(8)];
 
 describe('NodeJS IMAP->JMAP Proxy',function() {
   describe('Authentication',function() {
@@ -310,6 +312,66 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
         expect(resdata[0][1].onlyCountsChanged).to.equal(true);
       });
     });
+    describe('setMailboxes',function() {
+      describe('create 3 mailboxes/folders',function() {
+        this.timeout(10000);
+        var resdata = {};
+        before(function(done) {
+          var postData = [[
+            'setMailboxes',
+            {'ifInState':state,'create':{'folder1':{'name':folders[0]},'folder2':{'name':folders[1]},'folder3':{'name':folders[2]}}},
+            '#0'
+          ]]; 
+          request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
+            resdata = JSON.parse(body)[0];
+            state = resdata[1].newState;
+            resdata.code = res.statusCode;
+            done();
+          });
+        });
+        it('statusCode == 201',function() {
+          expect(resdata.code).to.equal(201);
+        });
+        it('newState > oldState',function() {
+          expect(resdata[1].newState > resdata[1].oldState).to.equal(true);
+        });
+        it('created = 3',function() {
+          expect(Object.keys(resdata[1].created).length).to.equal(3);
+        });
+      });
+      describe('create existing folder',function() {
+        this.timeout(10000);
+        var resdata = {};
+        before(function(done) {
+          var postData = [[
+            'setMailboxes',
+            {'ifInState':state,'create':{'folder1':{'name':folders[0]}}},
+            '#0'
+          ]]; 
+          request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
+            resdata = JSON.parse(body)[0];
+            state = resdata[1].newState;
+            resdata.code = res.statusCode;
+            done();
+          });
+        });
+        it('statusCode == 200',function() {
+          expect(resdata.code).to.equal(200);
+        });
+        it('newState == oldState',function() {
+          expect(resdata[1].newState == resdata[1].oldState).to.equal(true);
+        });
+        it('notCreated == 1',function() {
+          expect(Object.keys(resdata[1].notCreated).length).to.equal(1);
+        });
+        it('error type == invalidArguments',function() {
+          expect(resdata[1].notCreated.folder1.type).to.equal('invalidArguments');
+        });
+        it('error reason == already exists',function() {
+          expect(resdata[1].notCreated.folder1.description).to.equal('mailbox already exists');
+        });
+      });
+    });
   });
   describe('MessageLists',function() {
     describe('getMessageList - position=0 limit=10 sort=arrival [INBOX]',function() {
@@ -463,7 +525,6 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
         });
       });
       it('statusCode == 201',function() {
-console.log('blobs='+blobs);
         expect(resdata.code).to.equal(201);
       });
     });
@@ -484,8 +545,7 @@ console.log('blobs='+blobs);
           '#0'
         ]]; 
         request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
-console.log('body='+body);
-          resdata = JSON.parse(body);
+          resdata = JSON.parse(body)[0];
           resdata.code = res.statusCode;
           state = resdata.state;
           done();
@@ -494,7 +554,24 @@ console.log('body='+body);
       it('statusCode == 201',function() {
         expect(resdata.code).to.equal(201);
       });
+      it('response type is messages',function() {
+        expect(resdata[0]).to.equal('messages');
+      });
+      it('messages created?',function() {
+        expect(Object.keys(resdata[1].created).length).to.equal(3);
+      });
+      it('size == number',function() {
+        expect(resdata[1].created.mess1.size).to.be.a('number');
+      });
+      it('id == string',function() {
+        expect(resdata[1].created.mess1.id).to.be.a('string');
+      });
+      it('blobId == string',function() {
+        expect(resdata[1].created.mess1.blobId).to.be.a('string');
+      });
+      it('threadId == string',function() {
+        expect(resdata[1].created.mess1.threadId).to.be.a('string');
+      });
     });
   });
-
 });
