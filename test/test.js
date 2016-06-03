@@ -371,6 +371,61 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
           expect(resdata[1].notCreated.folder1.description).to.equal('mailbox already exists');
         });
       });
+      describe('delete 2 new folders',function() {
+        this.timeout(10000);
+        var resdata = {};
+        before(function(done) {
+          var postData = [[
+            'setMailboxes',
+            {'ifInState':state,'destroy':[folders[1],folders[2]]},
+            '#0'
+          ]]; 
+          request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
+            resdata = JSON.parse(body)[0];
+            state = resdata[1].newState;
+            resdata.code = res.statusCode;
+            done();
+          });
+        });
+        it('statusCode == 200',function() {
+          expect(resdata.code).to.equal(200);
+        });
+        it('newState > oldState',function() {
+          expect(resdata[1].newState > resdata[1].oldState).to.equal(true);
+        });
+        it('destroyed == 2',function() {
+          expect(Object.keys(resdata[1].destroyed).length).to.equal(2);
+        });
+      });
+      describe('delete nonexistant folder',function() {
+        this.timeout(10000);
+        var resdata = {};
+        before(function(done) {
+          var postData = [[
+            'setMailboxes',
+            {'ifInState':state,'destroy':['efihwefilhweihfwhlefwefw']},
+            '#0'
+          ]]; 
+          request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
+            resdata = JSON.parse(body)[0];
+            state = resdata[1].newState;
+            resdata.code = res.statusCode;
+            done();
+          });
+        });
+        it('statusCode == 200',function() {
+          expect(resdata.code).to.equal(200);
+        });
+        it('newState == oldState',function() {
+          expect(resdata[1].newState == resdata[1].oldState).to.equal(true);
+        });
+        it('notDestroyed == 1',function() {
+          expect(Object.keys(resdata[1].notDestroyed).length).to.equal(1);
+        });
+        it('error type == notFound',function() {
+          expect(resdata[1].notDestroyed['efihwefilhweihfwhlefwefw'].type).to.equal('notFound');
+        });
+      });
     });
   });
   describe('MessageLists',function() {

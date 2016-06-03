@@ -135,39 +135,57 @@ app.post('/jmap',function (req,res) {
     return;
   }
 
+  var method = req.body[0][0];
+  var data = req.body[0][1];
+  var seq = req.body[0][2];
+  var imap = state.active[token].imap;
+
   if (data && data.ifInState && data.ifInState != state.active[token].state) {
     console.log(state.active[token].username+'/'+token+': state mismatch');
     res.status('200').send(JSON.stringify({'type':'stateMismatch','description':'requested state:'+data.ifInState+' does not match current state:'+state.active[token].state}));
     return;
   }
 
-  console.log(state.active[token].username+'/'+token+': JMAP request payload='+util.inspect(req.body[0]));
-  var method = req.body[0][0];
-  var data = req.body[0][1];
-  var seq = req.body[0][2];
-  switch (method) {
-    case 'getAccounts':
-      getAccounts(token,data,seq,res);
-      break;
-    case 'getMailboxes':
-      getMailboxes(token,data,seq,res);
-      break;
-    case 'getMailboxUpdates':
-      getMailboxUpdates(token,data,seq,res);
-      break;
-    case 'setMailboxes':
-      setMailboxes(token,data,seq,res);
-      break;
-    case 'getMessageList':
-      getMessageList(token,data,seq,res);
-      break;
-    case 'setMessages':
-      setMessages(token,data,seq,res);
-      break;
-    case 'importMessages':
-      importMessages(token,data,seq,res);
-      break;
-  }
+  var authPromise = new Promise(function(yay,nay){
+    if (imap.state == 'authenticated') {
+      yay();
+    } else if (imap.state == 'disconnected') {
+      // socket came unconnected somehow, reconnect
+      console.log(state.active[token].username+'/'+token+': disconnected, logging back in');
+      imap.once('ready', function() {
+        console.log(state.active[token].username+'/'+token+': logged back in');
+        yay();
+      });
+      imap.connect();
+    }
+  });
+
+  authPromise.then(function() {
+    console.log(state.active[token].username+'/'+token+': JMAP request payload='+util.inspect(req.body[0]));
+    switch (method) {
+      case 'getAccounts':
+        getAccounts(token,data,seq,res);
+        break;
+      case 'getMailboxes':
+        getMailboxes(token,data,seq,res);
+        break;
+      case 'getMailboxUpdates':
+        getMailboxUpdates(token,data,seq,res);
+        break;
+      case 'setMailboxes':
+        setMailboxes(token,data,seq,res);
+        break;
+      case 'getMessageList':
+        getMessageList(token,data,seq,res);
+        break;
+      case 'setMessages':
+        setMessages(token,data,seq,res);
+        break;
+      case 'importMessages':
+        importMessages(token,data,seq,res);
+        break;
+    }
+  });
 });
 
 // getAccounts
@@ -381,8 +399,8 @@ function setMailboxes(token,data,seq,res) {
     'oldState': state.active[token].state,
     'newState': state.active[token].state,
     'created': {},
-    'updated': {},
-    'destroyed': {},
+    'updated': [],
+    'destroyed': [],
     'notCreated': {},
     'notUpdated': {},
     'notDestroyed': {}
@@ -420,8 +438,10 @@ function setMailboxes(token,data,seq,res) {
               'totalThreads': 0,
               'unreadThreads': 0
             };
-            response.newState = unixtime();
             console.log(state.active[token].username+'/'+token+': created folder '+id);
+            response.newState = unixtime();
+            state.active[token].state = response.newState;
+            state.active[token].mailboxes[id] = {'uidnext':1,'total':0,'new':0};
           }
           yay();
         });
@@ -431,6 +451,36 @@ function setMailboxes(token,data,seq,res) {
   if (data.update) {
   }
   if (data.destroy) {
+    data.destroy.forEach(function(id){
+      promises.push(new Promise(function(yay,nay){
+        var selectPromise = selectFolder(token,id);
+        selectPromise.then(function(box){
+          if (box == undefined) {
+            response.notDestroyed[id] = {'type':'notFound','description':'mailbox does not exist'};
+            yay();
+          } else if (box.messages.total > 0) {
+            response.notDestroyed[id] = {'type':'notFound','description':'mailbox not empty'};
+            yay();
+          } else {
+            imap.delBox(id,function(err){
+              if (err) {
+                response.notDestroyed[id] = {'type':'internalError','description':'failed to delete mailbox: '+err};
+    console.log(util.inspect(err));
+              } else {
+                response.destroyed.push(id);
+                console.log(state.active[token].username+'/'+token+': deleted folder '+id);
+                response.newState = unixtime();
+                state.active[token].state = response.newState;
+                delete state.active[token].mailboxes[id];
+              }
+              yay();
+            });
+          }
+        }).catch(function(err){
+          console.log('caught on selectpromise: '+util.inspect(err));
+        });;
+      }));
+    });
   }
   Promise.all(promises).then(function(){
     if (Object.keys(response.created).length > 0) {
@@ -749,9 +799,8 @@ getMessage = function(token,folder,uid) {
 selectFolder = function(token,folder,force) {
   var imap = state.active[token].imap;
   return new Promise(function(yay,nay){
-    if (force) imap._box = '';
     var curbox = (imap._box && imap._box.name) ? imap._box.name : null;
-    if (curbox == folder) {
+    if (curbox == folder && !force) {
       yay();
     } else {
       imap.openBox(folder,function(err,box){
