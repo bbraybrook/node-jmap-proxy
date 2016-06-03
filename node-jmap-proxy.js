@@ -1,3 +1,11 @@
+global.__base = __dirname + '/';
+global.state = { 'auth':{}, 'active':{} };
+var config = require('config');
+global.imaphost = config.get('IMAP.host');
+global.imapport = config.get('IMAP.port');
+global.imapssl  = config.get('IMAP.ssl');
+global.serverport = config.get('Server.port') || 3000;
+
 var util = require('util');
 var fs = require('fs');
 var express = require('express');
@@ -8,12 +16,11 @@ var Base64 = require('js-base64').Base64;
 var striptags = require('striptags');
 var quotedPrintable = require('quoted-printable');
 var isHtml = require('is-html');
-var config = require('config');
 var busboy = require('express-busboy');
 var app = express();
 busboy.extend(app, { upload: true, path: config.Server.uploadPath} );
 var textmode = (config.Server['utf-8'] == true) ? 'UTF-8' : 'US-ASCII';
-var state = { 'auth':{}, 'active':{} };
+var myAuth = require('./lib/authenticate.js');
 
 app.options('*',function(req,res) {
   res.set({
@@ -35,13 +42,13 @@ app.all('*',function(req,res,next) {
   
 
 app.post('/authenticate',function (req,res) {
-  authenticate(req,res);
+  myAuth.authenticate(req,res);
 });
 app.post('/.well-known/jmap',function (req,res) {
-  authenticate(req,res);
+  myAuth.authenticate(req,res);
 });
 
-function authenticate(req,res) {
+function authenticate2(req,res) {
   if (req.body.username) {
     var token = randomToken(16);
     console.log(req.body.username+'/'+token+': in pre-auth');
@@ -1172,11 +1179,6 @@ function flags_from_msg(msg) {
   }
   return ret;
 }
-
-var imaphost = config.get('IMAP.host');
-var imapport = config.get('IMAP.port');
-var imapssl  = config.get('IMAP.ssl');
-var serverport = config.get('Server.port') || 3000;
 
 app.listen(serverport, function () {
   console.log('JMAP proxy listening on port '+serverport);
