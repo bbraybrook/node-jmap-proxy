@@ -16,6 +16,7 @@ edit config/default.json
 
 ** Running **
 
+node ./config-server-fs.js &
 node ./node-jmap-proxy.js
 
 ** Test Suite **
