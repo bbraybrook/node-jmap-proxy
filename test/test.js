@@ -192,7 +192,7 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
     });
   });
   describe('Mailboxes',function() {
-    describe('getMailboxes',function() {
+/*    describe('getMailboxes',function() {
       this.timeout(10000);
       var resdata = {};
       before(function(done) {
@@ -311,7 +311,7 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
       it('onlyCountsChanged is true',function() {
         expect(resdata[0][1].onlyCountsChanged).to.equal(true);
       });
-    });
+    }); */
     describe('setMailboxes',function() {
       describe('create 3 mailboxes/folders',function() {
         this.timeout(10000);

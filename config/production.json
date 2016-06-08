@@ -1,10 +1,10 @@
 {
   "IMAP": {
-    "host": "mail.domain.net",
+    "host": "mail.dev.hostedemail.com",
     "port": 143,
     "ssl": false
   },
-  "Server" {
+  "Server" : {
     "port": 3000,
     "utf-8": true,
     "threads":"REFERENCES",
@@ -25,6 +25,6 @@
   "ConfigServer": {
     "port": 3002,
     "dataDir": "./data",
-    "hashLevels": 1
+    "hashLevels": 2
   }
 }

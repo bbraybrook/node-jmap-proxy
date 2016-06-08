@@ -21,6 +21,7 @@ var myMailboxes = require('./lib/mailboxes.js');
 var myMessageLists = require('./lib/messagelists.js');
 var myMessages = require('./lib/messages.js');
 var myUtil = require('./lib/util.js');
+var myConfig = require('./lib/config.js');
 
 //app.options('*',function(req,res) {
 //  res.set({
