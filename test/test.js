@@ -583,7 +583,7 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
         expect(resdata.code).to.equal(201);
       });
     });
-      describe('import 3 messages',function() {
+    describe('import 3 messages',function() {
       this.timeout(10000);
       var resdata = {};
       before(function(done) {
@@ -592,9 +592,9 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
           {
             'accountId': user,
             'messages': {
-              'mess1':{'blobId':blobs[0],'mailboxIds':['cristina'],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
-              'mess2':{'blobId':blobs[1],'mailboxIds':['cristina'],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
-              'mess3':{'blobId':blobs[2],'mailboxIds':['cristina'],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
+              'mess1':{'blobId':blobs[0],'mailboxIds':[folders[0]],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
+              'mess2':{'blobId':blobs[1],'mailboxIds':[folders[0]],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
+              'mess3':{'blobId':blobs[2],'mailboxIds':[folders[0]],'isUnread':false,'isFlagged':true,'isAnswered':false,'isDraft':false},
             }
           },
           '#0'
@@ -626,6 +626,38 @@ describe('NodeJS IMAP->JMAP Proxy',function() {
       });
       it('threadId == string',function() {
         expect(resdata[1].created.mess1.threadId).to.be.a('string');
+      });
+    });
+  });
+  describe('setMailboxes 2',function() {
+    describe('delete folder with messages: '+folders[0],function() {
+      this.timeout(10000);
+      var resdata = {};
+      before(function(done) {
+        var postData = [[
+          'setMailboxes',
+          {'ifInState':state,'destroy':[folders[0]]},
+          '#0'
+        ]]; 
+        request.post({url:hostname+'/jmap', form:postData, headers:{'Authorization':token}}, function(err,res,body){
+          resdata = JSON.parse(body)[0];
+          state = resdata[1].newState;
+          resdata.code = res.statusCode;
+          done();
+        });
+      });
+      it('statusCode == 200',function() {
+console.log(util.inspect(resdata,{'depth':4}));
+        expect(resdata.code).to.equal(200);
+      });
+      it('notDestroyed == 1',function() {
+        expect(Object.keys(resdata[1].notDestroyed).length).to.equal(1);
+      });
+      it('error type == invalidArguments',function() {
+        expect(resdata[1].notDestroyed[folders[0]].type).to.equal('invalidArguments');
+      });
+      it('error desc == mailbox not empty',function() {
+        expect(resdata[1].notDestroyed[folders[0]].description).to.equal('mailbox not empty');
       });
     });
   });

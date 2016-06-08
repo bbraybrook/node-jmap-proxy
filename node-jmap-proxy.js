@@ -22,14 +22,14 @@ var myMessageLists = require('./lib/messagelists.js');
 var myMessages = require('./lib/messages.js');
 var myUtil = require('./lib/util.js');
 
-app.options('*',function(req,res) {
-  res.set({
-    'Access-Control-Allow-Origin':'*',
-    'Access-Control-Allow-Methods':'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers':"Origin, X-Requested-With, Content-Type, Accept, Authorization"
-  });
-  res.send();
-});
+//app.options('*',function(req,res) {
+//  res.set({
+//    'Access-Control-Allow-Origin':'*',
+//    'Access-Control-Allow-Methods':'GET, POST, OPTIONS',
+//    'Access-Control-Allow-Headers':"Origin, X-Requested-With, Content-Type, Accept, Authorization"
+//  });
+//  res.send();
+//});
 
 app.all('*',function(req,res,next) {
   res.set({
