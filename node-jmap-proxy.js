@@ -20,8 +20,8 @@ var myAccounts = require('./lib/accounts.js');
 var myMailboxes = require('./lib/mailboxes.js');
 var myMessageLists = require('./lib/messagelists.js');
 var myMessages = require('./lib/messages.js');
+var myContacts = require('./lib/contacts.js');
 var myUtil = require('./lib/util.js');
-var myConfig = require('./lib/config.js');
 
 //app.options('*',function(req,res) {
 //  res.set({
@@ -143,6 +143,21 @@ app.post('/jmap',function (req,res) {
         break;
       case 'importMessages':
         myMessages.importMessages(token,data,seq,res);
+        break;
+      case 'copyMessages':
+        myMessages.copyMessages(token,data,seq,res);
+        break;
+      case 'getContactList':
+        myContacts.getContactList(token,data,seq,res);
+        break;
+      case 'getContacts':
+        myContacts.getContacts(token,data,seq,res);
+        break;
+      case 'getContactUpdates':
+        myContacts.getContactUpdates(token,data,seq,res);
+        break;
+      case 'setContacts':
+        myContacts.setContacts(token,data,seq,res);
         break;
     }
   });

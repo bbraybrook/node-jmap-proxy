@@ -19,9 +19,10 @@
     "striptags":"^2.1.1",
     "quoted-printable":"^1.0.0",
     "is-html":"^1.0.0",
-    "imap-promise":"^1.0.2",
     "rmdir":"^1.2.0",
-    "express-busboy":"^2.5.0"
+    "express-busboy":"^2.5.0",
+    "mkdirp":"^0.5.1 ",
+    "vdata-parser":"^0.1.5"
   },
   "devDependencies": {
     "chai":"^3.5.0",

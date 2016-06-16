@@ -7,24 +7,30 @@
   "Server" : {
     "port": 3000,
     "utf-8": true,
-    "threads":"REFERENCES",
-    "uploadPath":"./upload",
+    "threads": "REFERENCES",
+    "uploadPath": "./upload",
     "uploadExpireLength": 3600,
-    "cleanupTime": 90000
+    "cleanupTime": 90000,
+    "datastore": "datastore_fs"
   },
   "Options": {
     "prefer_RFC6154": true,
     "special_folders": {
-      "Trash":"trash",
-      "Sent Items":"sent",
-      "Drafts":"drafts",
-      "Spam":"spam",
-      "Templates":"templates"
+      "Trash": "trash",
+      "Sent Items": "sent",
+      "Drafts": "drafts",
+      "Spam": "spam",
+      "Templates": "templates"
+    },
+    "contacts": {
+      "sort_by": "nickname",
+      "sort_order": "ascending"
     }
   },
-  "ConfigServer": {
-    "port": 3002,
-    "dataDir": "./data",
+  "datastore_fs": {
+    "configBaseDir": "./data",
+    "calendarBaseDir": "./data",
+    "contactBaseDir": "./data",
     "hashLevels": 2
   }
 }
