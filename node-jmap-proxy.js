@@ -95,6 +95,7 @@ app.post('/jmap',function (req,res) {
     return;
   }
 
+console.log('body='+util.inspect(req.body));
   var method = req.body[0][0];
   var data = req.body[0][1];
   var seq = req.body[0][2];
@@ -121,7 +122,7 @@ app.post('/jmap',function (req,res) {
   });
 
   authPromise.then(function() {
-    console.log(state.active[token].username+'/'+token+': JMAP request payload='+util.inspect(req.body[0]));
+    console.log(state.active[token].username+'/'+token+': JMAP request payload='+util.inspect(req.body[0],{'depth':5}));
     switch (method) {
       case 'getAccounts':
         myAccounts.getAccounts(token,data,seq,res);
