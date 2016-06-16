@@ -7,24 +7,52 @@
   "Server" {
     "port": 3000,
     "utf-8": true,
-    "threads":"REFERENCES",
-    "uploadPath":"./upload",
+    // type of threading to use on the IMAP server
+    "threads": "REFERENCES",
+    // temporary path for uploads, must be writable
+    "uploadPath": "./upload",
+    // how long uploads are valid for (in seconds)
     "uploadExpireLength": 3600,
-    "cleanupTime": 90000
+    // how often old uploads are cleaned up (in milliseconds)
+    "cleanupTime": 90000,
+    // datastore should be chosen based on your desired backend storage method
+    "datastore": "datastore_fs"
   },
   "Options": {
+    // if enabled and present, flags from the IMAP server will override your
+    // configured special folders
     "prefer_RFC6154": true,
     "special_folders": {
-      "Trash":"trash",
-      "Sent Items":"sent",
-      "Drafts":"drafts",
-      "Spam":"spam",
-      "Templates":"templates"
+      "Trash": "trash",
+      "Sent Items": "sent",
+      "Drafts": "drafts",
+      "Spam": "spam",
+      "Templates": "templates"
+    },
+    "contacts": {
+      // default sorting options for contacts
+      "sort_by": "nickname",
+      "sort_order": "ascending"
     }
   },
-  "ConfigServer": {
-    "port": 3002,
-    "dataDir": "./data",
-    "hashLevels": 1
+  // only used if Server.datastore == datastore_fs 
+  "datastore_fs": {
+    // you may wish to split these basedirs up, in order to have them
+    // mounted on different volumes. paths must be writable
+    // base of config file
+    "configBaseDir": "./data",
+    // base of calendar data files
+    "calendarBaseDir": "./data",
+    // base of contact data files
+    "contactBaseDir": "./data",
+    // the number of hashlevels to use. valid values are 0, 1, or 2
+    // 0 would result in: ./data/user@domain.net
+    // 1 would result in: ./data/xxx/user@domain.net
+    // 2 would result in: ./data/xxx/yyy/user@domain.net
+    // the number required depends on the number of users your system has
+    // if under 1024, choose 0
+    // if under 100000, choose 1
+    // if over 100000, choose 2
+    "hashLevels": 2
   }
 }
